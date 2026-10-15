@@ -1,0 +1,7 @@
+{
+  "name": "Meds24",
+  "description": "Your Trusted Healthcare Partner - Online Medicine Ordering & Telegram Admin System",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
