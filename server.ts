@@ -781,6 +781,62 @@ app.get('/api/payment-settings', async (req, res) => {
   }
 });
 
+app.get('/api/admin/payment-settings', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query('SELECT * FROM payment_settings ORDER BY id ASC');
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/payment-settings', requireAdminAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { methods } = req.body;
+    if (!Array.isArray(methods)) {
+      throw new Error('Invalid payment settings payload.');
+    }
+
+    for (const m of methods) {
+      if (!m.method_code || !m.method_name) continue;
+      if (m.method_code.includes('upi') && m.merchant_upi_id && !m.merchant_upi_id.includes('@')) {
+        throw new Error(`Invalid UPI VPA ID format for ${m.method_name}: ${m.merchant_upi_id}`);
+      }
+
+      await client.query(
+        `UPDATE payment_settings 
+         SET method_name = $1, is_enabled = $2, min_order_amount = $3, max_order_amount = $4, fee = $5, discount_percent = $6, advance_percent = $7, merchant_upi_id = $8, merchant_name = $9, updated_at = CURRENT_TIMESTAMP
+         WHERE method_code = $10`,
+        [
+          m.method_name,
+          Boolean(m.is_enabled),
+          parseFloat(m.min_order_amount || 0),
+          parseFloat(m.max_order_amount || 50000),
+          parseFloat(m.fee || 0),
+          parseFloat(m.discount_percent || 0),
+          parseFloat(m.advance_percent || 30),
+          m.merchant_upi_id || 'meds24.pay@upi',
+          m.merchant_name || 'Meds24 Healthcare',
+          m.method_code
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    await logAudit(req.admin.id, req.admin.name, 'UPDATE_PAYMENT_SETTINGS', 'payment_settings', null, 'Updated configurable payment methods and UPI credentials');
+
+    res.json({ success: true, message: 'Payment settings updated successfully.' });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+
 // ==================== PHASE 3: CATALOGUE & CHECKOUT APIS ====================
 
 app.get('/api/categories', async (req, res) => {

@@ -22,7 +22,9 @@
         <button onclick="switchTab('orders')" id="tab-orders" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Orders</button>
         <button onclick="switchTab('payments')" id="tab-payments" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Pending Payments</button>
         <button onclick="switchTab('products')" id="tab-products" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Products & Stock</button>
+        <button onclick="switchTab('settings')" id="tab-settings" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Payment Settings</button>
     </nav>
+
 
     <main class="p-4 max-w-5xl mx-auto space-y-6 pb-16">
         <!-- TAB 1: DASHBOARD -->
@@ -125,6 +127,24 @@
                 <div class="p-8 text-center text-slate-400 text-xs">Loading products...</div>
             </div>
         </section>
+
+        <!-- TAB 5: PAYMENT SETTINGS -->
+        <section id="section-settings" class="space-y-4 hidden">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+                <div class="flex justify-between items-center border-b border-slate-100 pb-4">
+                    <div>
+                        <h2 class="font-bold text-base text-slate-900">Payment & UPI Gateway Settings</h2>
+                        <p class="text-xs text-slate-500">Configure business UPI IDs, display names, QR codes, and enable/disable payment methods.</p>
+                    </div>
+                    <button onclick="savePaymentSettings()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm">
+                        Save Changes
+                    </button>
+                </div>
+                <div id="payment-settings-container" class="space-y-6">
+                    <div class="text-center text-slate-400 text-xs py-8">Loading payment settings...</div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <script>
@@ -146,7 +166,7 @@
         };
 
         function switchTab(tab) {
-            ['dashboard', 'orders', 'payments', 'products'].forEach(t => {
+            ['dashboard', 'orders', 'payments', 'products', 'settings'].forEach(t => {
                 document.getElementById(`section-${t}`).classList.add('hidden');
                 document.getElementById(`tab-${t}`).className = 'px-4 py-3 border-b-2 border-transparent text-slate-600 whitespace-nowrap';
             });
@@ -155,6 +175,111 @@
             if (tab === 'orders') loadOrders();
             if (tab === 'payments') loadPendingPayments();
             if (tab === 'products') loadProducts();
+            if (tab === 'settings') loadPaymentSettings();
+        }
+
+        async function loadPaymentSettings() {
+            const container = document.getElementById('payment-settings-container');
+            try {
+                const res = await fetch('/api/admin/payment-settings', { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load payment settings.');
+                const methods = await res.json();
+
+                container.innerHTML = methods.map((m, index) => `
+                    <div class="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-4" data-code="${m.method_code}">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <span class="font-mono text-xs font-bold bg-slate-200 px-2 py-0.5 rounded text-slate-700">${m.method_code}</span>
+                                <input type="text" id="pay-name-${index}" value="${m.method_name}" class="font-bold text-sm bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500" />
+                            </div>
+                            <label class="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                                <input type="checkbox" id="pay-enabled-${index}" ${m.is_enabled ? 'checked' : ''} class="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500" />
+                                Enable Method
+                            </label>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                            <div>
+                                <label class="block font-semibold text-slate-600 mb-1">Merchant UPI ID (VPA)</label>
+                                <input type="text" id="pay-upi-${index}" value="${m.merchant_upi_id || ''}" placeholder="e.g. meds24.pay@upi" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 font-mono" />
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-600 mb-1">Merchant Display Name</label>
+                                <input type="text" id="pay-merchant-${index}" value="${m.merchant_name || ''}" placeholder="Meds24 Healthcare" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2" />
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-600 mb-1">Min Order Amount (₹)</label>
+                                <input type="number" id="pay-min-${index}" value="${m.min_order_amount}" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2" />
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-600 mb-1">Max Order Amount (₹)</label>
+                                <input type="number" id="pay-max-${index}" value="${m.max_order_amount}" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2" />
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-600 mb-1">Discount % (Extra off for payment)</label>
+                                <input type="number" step="0.1" id="pay-discount-${index}" value="${m.discount_percent}" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2" />
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-600 mb-1">Advance % (For advance UPI)</label>
+                                <input type="number" step="0.1" id="pay-advance-${index}" value="${m.advance_percent}" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2" />
+                            </div>
+                        </div>
+                    </div>
+                `).join('') + `
+                    <div class="flex justify-end pt-2">
+                        <button onclick="savePaymentSettings()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-md">
+                            Save Payment Settings
+                        </button>
+                    </div>
+                `;
+            } catch (err) {
+                console.error(err);
+                container.innerHTML = '<div class="p-8 text-center text-red-500 text-xs">Failed to load payment settings.</div>';
+            }
+        }
+
+        async function savePaymentSettings() {
+            const container = document.getElementById('payment-settings-container');
+            const methodCards = container.querySelectorAll('[data-code]');
+            const methods = [];
+
+            methodCards.forEach((card, index) => {
+                const method_code = card.getAttribute('data-code');
+                const method_name = document.getElementById(`pay-name-${index}`).value;
+                const is_enabled = document.getElementById(`pay-enabled-${index}`).checked;
+                const merchant_upi_id = document.getElementById(`pay-upi-${index}`).value;
+                const merchant_name = document.getElementById(`pay-merchant-${index}`).value;
+                const min_order_amount = document.getElementById(`pay-min-${index}`).value;
+                const max_order_amount = document.getElementById(`pay-max-${index}`).value;
+                const discount_percent = document.getElementById(`pay-discount-${index}`).value;
+                const advance_percent = document.getElementById(`pay-advance-${index}`).value;
+
+                methods.push({
+                    method_code,
+                    method_name,
+                    is_enabled,
+                    merchant_upi_id,
+                    merchant_name,
+                    min_order_amount,
+                    max_order_amount,
+                    discount_percent,
+                    advance_percent
+                });
+            });
+
+            try {
+                const res = await fetch('/api/admin/payment-settings', {
+                    method: 'PUT',
+                    headers: apiHeaders,
+                    body: JSON.stringify({ methods }),
+                    credentials: 'include'
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to update payment settings.');
+                alert('Payment settings saved successfully.');
+                loadPaymentSettings();
+            } catch (err) {
+                alert(err.message);
+            }
         }
 
         async function loadAllData() {
