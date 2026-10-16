@@ -62,7 +62,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 w-full overflow-hidden">
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 w-full overflow-visible">
       {/* Top Announcement Bar */}
       <div className="bg-emerald-700 text-white text-[10px] sm:text-xs py-1.5 px-3 sm:px-4 text-center font-medium flex justify-center items-center gap-4 sm:gap-6">
         <span className="flex items-center gap-1.5 truncate"><ShieldCheck className="w-3.5 h-3.5 shrink-0" /> 100% Genuine Medicines</span>
