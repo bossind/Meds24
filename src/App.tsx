@@ -12,6 +12,7 @@ import { PrescriptionModal } from './components/PrescriptionModal';
 import { OrderTrackingModal } from './components/OrderTrackingModal';
 import { HiddenSettingsModal } from './components/HiddenSettingsModal';
 import { Footer } from './components/Footer';
+import { BottomNavBar } from './components/BottomNavBar';
 
 export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -211,8 +212,45 @@ export default function App() {
 
   const totalCartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
+  const activeTab: 'home' | 'search' | 'orders' | 'profile' = 
+    isProfileOpen || isAuthOpen ? 'profile' : 
+    (isTrackingOpen || trackedOrderId !== null) ? 'orders' : 
+    searchQuery ? 'search' : 'home';
+
+  const handleTabSelect = (tab: 'home' | 'search' | 'orders' | 'profile') => {
+    setIsTrackingOpen(false);
+    setTrackedOrderId(null);
+    setIsProfileOpen(false);
+    setIsAuthOpen(false);
+    setIsCartOpen(false);
+    setIsPrescriptionOpen(false);
+
+    if (tab === 'home') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setSearchQuery('');
+      setSelectedCategory('all');
+    } else if (tab === 'search') {
+      const el = document.getElementById('products');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+      if (searchInput) searchInput.focus();
+    } else if (tab === 'orders') {
+      if (currentUser) {
+        setIsTrackingOpen(true);
+      } else {
+        setIsAuthOpen(true);
+      }
+    } else if (tab === 'profile') {
+      if (currentUser) {
+        setIsProfileOpen(true);
+      } else {
+        setIsAuthOpen(true);
+      }
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 selection:bg-emerald-500 selection:text-white">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 selection:bg-emerald-500 selection:text-white pb-24 sm:pb-0">
       {/* Header */}
       <Header
         cartCount={totalCartCount}
@@ -335,6 +373,9 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />
+
+      {/* Premium Liquid Glass Bottom Navigation Bar */}
+      <BottomNavBar activeTab={activeTab} onTabSelect={handleTabSelect} />
     </div>
   );
 }

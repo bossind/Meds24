@@ -16,10 +16,25 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
+  const [customerOrders, setCustomerOrders] = useState<any[]>([]);
+  const [fetchingOrders, setFetchingOrders] = useState(false);
 
   useEffect(() => {
     setActiveOrderId(orderId);
   }, [orderId]);
+
+  useEffect(() => {
+    if (isOpen && !activeOrderId) {
+      setFetchingOrders(true);
+      fetch('/api/orders', { credentials: 'include' })
+        .then(res => res.ok ? res.json() : [])
+        .then(data => {
+          if (Array.isArray(data)) setCustomerOrders(data);
+        })
+        .catch(() => {})
+        .finally(() => setFetchingOrders(false));
+    }
+  }, [isOpen, activeOrderId]);
 
   const fetchTracking = async (idToFetch: number) => {
     if (!idToFetch) return;
@@ -126,27 +141,61 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
         {/* Modal Content */}
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-6">
           {!activeOrderId ? (
-            <div className="py-12 text-center space-y-4">
-              <Package className="w-12 h-12 text-slate-300 mx-auto" />
-              <h3 className="text-base font-bold text-slate-800">Enter Order ID to Track</h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">Please enter your order number or select an order from your notifications or account history.</p>
-              <div className="flex max-w-sm mx-auto gap-2">
-                <input
-                  type="number"
-                  value={inputOrderId}
-                  onChange={(e) => setInputOrderId(e.target.value)}
-                  placeholder="e.g. 101"
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-                <button
-                  onClick={() => {
-                    const parsed = parseInt(inputOrderId);
-                    if (parsed) setActiveOrderId(parsed);
-                  }}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs transition-colors"
-                >
-                  Track
-                </button>
+            <div className="space-y-6">
+              <div className="text-center space-y-2">
+                <Package className="w-10 h-10 text-emerald-600 mx-auto" />
+                <h3 className="text-base font-bold text-slate-800">Your Orders & Tracking</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">Select an order below to view live tracking status, or enter an Order ID.</p>
+                <div className="flex max-w-sm mx-auto gap-2 pt-2">
+                  <input
+                    type="number"
+                    value={inputOrderId}
+                    onChange={(e) => setInputOrderId(e.target.value)}
+                    placeholder="Enter Order ID..."
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    onClick={() => {
+                      const parsed = parseInt(inputOrderId);
+                      if (parsed) setActiveOrderId(parsed);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-colors"
+                  >
+                    Track
+                  </button>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-4">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Recent Orders</h4>
+                {fetchingOrders ? (
+                  <div className="py-6 text-center text-xs text-slate-400">Loading your orders...</div>
+                ) : customerOrders.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl p-6">
+                    You have not placed any orders yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {customerOrders.map((ord) => (
+                      <div
+                        key={ord.id}
+                        onClick={() => setActiveOrderId(ord.id)}
+                        className="bg-slate-50 hover:bg-emerald-50/60 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 transition-all cursor-pointer flex justify-between items-center"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-sm text-slate-900">Order #{ord.id}</span>
+                            <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">{ord.status}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            {new Date(ord.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} • ₹{ord.final_amount}
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-emerald-600">Track →</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ) : loading ? (
