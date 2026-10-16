@@ -54,8 +54,17 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ currentUser,
         setIsOpen(false);
       }
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const markAsRead = async (id: number, orderId?: number) => {
@@ -109,35 +118,36 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ currentUser,
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 sm:right-0 sm:left-auto mt-2 w-[calc(100vw-24px)] sm:w-96 max-w-[384px] bg-white rounded-2xl shadow-xl border border-slate-200 z-50 overflow-hidden flex flex-col max-h-[500px]">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-slate-800 text-sm">Notifications</h3>
+        <div className="fixed left-3 right-3 top-20 mx-auto max-w-sm sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 sm:mx-0 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden flex flex-col max-h-[min(70vh,500px)] box-border">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className="font-bold text-slate-800 text-sm truncate">Notifications</h3>
               {unreadCount > 0 && (
-                <span className="bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                <span className="bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0">
                   {unreadCount} new
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               {unreadCount > 0 && (
                 <button
                   onClick={markAllAsRead}
-                  className="text-xs font-medium text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+                  className="text-xs font-medium text-emerald-600 hover:text-emerald-700 flex items-center gap-1 whitespace-nowrap"
                 >
                   <CheckCheck className="w-3.5 h-3.5" /> Mark all read
                 </button>
               )}
               <button
                 onClick={() => setIsOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200/50 transition-colors"
+                title="Close"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          <div className="overflow-y-auto flex-1 divide-y divide-slate-100">
+          <div className="overflow-y-auto overflow-x-hidden flex-1 divide-y divide-slate-100 min-w-0">
             {loading && notifications.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-sm">Loading notifications...</div>
             ) : notifications.length === 0 ? (
@@ -151,7 +161,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ currentUser,
                 <div
                   key={n.id}
                   onClick={() => markAsRead(n.id, n.order_id)}
-                  className={`p-3.5 sm:p-4 hover:bg-slate-50 transition-colors cursor-pointer flex gap-3 ${!n.is_read ? 'bg-emerald-50/50' : ''}`}
+                  className={`p-3.5 sm:p-4 hover:bg-slate-50 transition-colors cursor-pointer flex gap-3 min-w-0 ${!n.is_read ? 'bg-emerald-50/50' : ''}`}
                 >
                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
                     n.type === 'order' ? 'bg-blue-100 text-blue-600' :
@@ -163,7 +173,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ currentUser,
                      n.type === 'delivery' ? <Truck className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start gap-2">
+                    <div className="flex justify-between items-start gap-2 min-w-0">
                       <h4 className={`text-xs font-semibold truncate ${!n.is_read ? 'text-slate-900 font-bold' : 'text-slate-700'}`}>
                         {n.title}
                       </h4>
@@ -171,7 +181,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ currentUser,
                         {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-600 mt-1 line-clamp-2 leading-relaxed">{n.message}</p>
+                    <p className="text-xs text-slate-600 mt-1 [overflow-wrap:anywhere] leading-relaxed">{n.message}</p>
                     {n.order_id && (
                       <span className="inline-block mt-2 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
                         View Order #{n.order_id} →

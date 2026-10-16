@@ -45,6 +45,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [error, setError] = useState('');
   const [createdOrderData, setCreatedOrderData] = useState<any>(null);
 
+  const prevItemsRef = React.useRef(items);
+  useEffect(() => {
+    if (JSON.stringify(items) !== JSON.stringify(prevItemsRef.current)) {
+      prevItemsRef.current = items;
+      setCreatedOrderData(null);
+      setStep('cart');
+    }
+  }, [items]);
+
   useEffect(() => {
     if (isOpen && currentUser) {
       fetchAddresses();
@@ -181,12 +190,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         <div className="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
           <h2 className="font-bold text-lg text-slate-900">
             {step === 'cart' && `Your Shopping Cart (${items.length})`}
-            {step === 'checkout' && 'Secure Checkout'}
+            {step === 'checkout' && (createdOrderData ? 'Order Summary' : 'Secure Checkout')}
             {step === 'upi_payment' && 'Complete UPI Payment'}
             {step === 'success' && 'Order Placed'}
           </h2>
           <button
-            onClick={onClose}
+            onClick={() => {
+              if (step === 'upi_payment') {
+                setStep('checkout');
+              } else {
+                onClose();
+              }
+            }}
+            aria-label="Close payment page"
+            title={step === 'upi_payment' ? 'Return to Order Summary' : 'Close'}
             className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -254,109 +271,147 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           )}
 
           {step === 'checkout' && (
-            <form onSubmit={handlePlaceOrder} className="space-y-4">
-              {error && <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl font-medium">{error}</div>}
+            createdOrderData ? (
+              <div className="space-y-6 text-center">
+                <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-200 space-y-3 text-left">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Order Summary</span>
+                    <span className="bg-emerald-200 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">Awaiting Payment</span>
+                  </div>
+                  <h3 className="font-extrabold text-slate-900 text-lg">Order #{createdOrderData.orderId}</h3>
+                  <p className="text-xs text-slate-600">Total Amount: <span className="font-bold text-slate-900">₹{createdOrderData.amountPaid !== undefined ? createdOrderData.amountPaid : createdOrderData.finalAmount}</span></p>
+                  {selectedAddress && (
+                    <p className="text-xs text-slate-500 pt-1 border-t border-emerald-200/60">
+                      Deliver to: <strong className="text-slate-700">{selectedAddress.name}</strong>, {selectedAddress.street}, {selectedAddress.city} ({selectedAddress.pincode})
+                    </p>
+                  )}
+                </div>
 
-              {/* Delivery Address Section */}
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-emerald-600" /> Delivery Address
-                  </span>
+                <div className="space-y-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => setIsAddressModalOpen(true)}
-                    className="text-xs text-emerald-700 font-semibold hover:underline"
+                    onClick={() => setStep('upi_payment')}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2"
                   >
-                    {selectedAddress ? 'Change' : 'Add Address'}
+                    <QrCode className="w-4 h-4" /> Continue UPI Payment
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onCheckoutSuccess(createdOrderData.orderId);
+                      onClose();
+                    }}
+                    className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-3 rounded-xl text-xs transition-colors"
+                  >
+                    View Order Tracking & Status
                   </button>
                 </div>
-                {selectedAddress ? (
-                  <div className="text-xs space-y-0.5 text-slate-700">
-                    <p className="font-bold text-slate-900">{selectedAddress.name} ({selectedAddress.address_type})</p>
-                    <p>{selectedAddress.house_no}, {selectedAddress.street}{selectedAddress.landmark ? `, ${selectedAddress.landmark}` : ''}</p>
-                    <p>{selectedAddress.city}, {selectedAddress.state} - {selectedAddress.pincode}</p>
-                    <p className="text-slate-500">Phone: +91 {selectedAddress.phone}</p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-red-600 font-medium">No delivery address selected.</p>
-                )}
               </div>
+            ) : (
+              <form onSubmit={handlePlaceOrder} className="space-y-4">
+                {error && <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl font-medium">{error}</div>}
 
-              {/* Payment Method Selection */}
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">Payment Method</label>
-                <div className="space-y-2">
-                  {paymentSettings.map((pay) => (
-                    <label
-                      key={pay.method_code}
-                      className={`flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                        selectedPaymentMethod === pay.method_code
-                          ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20'
-                          : 'bg-white border-slate-200 hover:border-slate-300'
-                      }`}
+                {/* Delivery Address Section */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-emerald-600" /> Delivery Address
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddressModalOpen(true)}
+                      className="text-xs text-emerald-700 font-semibold hover:underline"
                     >
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value={pay.method_code}
-                        checked={selectedPaymentMethod === pay.method_code}
-                        onChange={() => setSelectedPaymentMethod(pay.method_code)}
-                        className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <div className="flex-1 text-xs">
-                        <div className="flex justify-between items-center font-bold text-slate-900">
-                          <span>{pay.method_name}</span>
-                          {parseFloat(String(pay.discount_percent || 0)) > 0 && (
-                            <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded font-bold">
-                              {pay.discount_percent}% OFF
-                            </span>
-                          )}
+                      {selectedAddress ? 'Change' : 'Add Address'}
+                    </button>
+                  </div>
+                  {selectedAddress ? (
+                    <div className="text-xs space-y-0.5 text-slate-700">
+                      <p className="font-bold text-slate-900">{selectedAddress.name} ({selectedAddress.address_type})</p>
+                      <p>{selectedAddress.house_no}, {selectedAddress.street}{selectedAddress.landmark ? `, ${selectedAddress.landmark}` : ''}</p>
+                      <p>{selectedAddress.city}, {selectedAddress.state} - {selectedAddress.pincode}</p>
+                      <p className="text-slate-500">Phone: +91 {selectedAddress.phone}</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-red-600 font-medium">No delivery address selected.</p>
+                  )}
+                </div>
+
+                {/* Payment Method Selection */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">Payment Method</label>
+                  <div className="space-y-2">
+                    {paymentSettings.map((pay) => (
+                      <label
+                        key={pay.method_code}
+                        className={`flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                          selectedPaymentMethod === pay.method_code
+                            ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="paymentMethod"
+                          value={pay.method_code}
+                          checked={selectedPaymentMethod === pay.method_code}
+                          onChange={() => setSelectedPaymentMethod(pay.method_code)}
+                          className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <div className="flex-1 text-xs">
+                          <div className="flex justify-between items-center font-bold text-slate-900">
+                            <span>{pay.method_name}</span>
+                            {parseFloat(String(pay.discount_percent || 0)) > 0 && (
+                              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded font-bold">
+                                {pay.discount_percent}% OFF
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-slate-500 mt-0.5">
+                            {pay.method_code === 'advance_upi'
+                              ? `Pay ${pay.advance_percent}% advance now via UPI, remaining on delivery.`
+                              : pay.method_code === 'full_upi'
+                              ? 'Instant secure UPI payment with extra discount.'
+                              : 'Pay cash when your order arrives.'}
+                          </p>
                         </div>
-                        <p className="text-slate-500 mt-0.5">
-                          {pay.method_code === 'advance_upi'
-                            ? `Pay ${pay.advance_percent}% advance now via UPI, remaining on delivery.`
-                            : pay.method_code === 'full_upi'
-                            ? 'Instant secure UPI payment with extra discount.'
-                            : 'Pay cash when your order arrives.'}
-                        </p>
-                      </div>
-                    </label>
-                  ))}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {requiresPrescription && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Prescription Image URL *</label>
-                  <input
-                    type="url"
-                    required
-                    value={prescriptionUrl}
-                    onChange={(e) => setPrescriptionUrl(e.target.value)}
-                    placeholder="https://example.com/prescription.jpg"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
+                {requiresPrescription && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Prescription Image URL *</label>
+                    <input
+                      type="url"
+                      required
+                      value={prescriptionUrl}
+                      onChange={(e) => setPrescriptionUrl(e.target.value)}
+                      placeholder="https://example.com/prescription.jpg"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                )}
+
+                <div className="pt-4 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setStep('cart')}
+                    className="w-1/3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-3 rounded-xl text-xs transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading || !selectedAddress}
+                    className="w-2/3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md flex items-center justify-center gap-2"
+                  >
+                    {loading ? 'Processing...' : 'Place Order'}
+                  </button>
                 </div>
-              )}
-
-              <div className="pt-4 flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setStep('cart')}
-                  className="w-1/3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-3 rounded-xl text-xs transition-colors"
-                >
-                  Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading || !selectedAddress}
-                  className="w-2/3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md flex items-center justify-center gap-2"
-                >
-                  {loading ? 'Processing...' : 'Place Order'}
-                </button>
-              </div>
-            </form>
+              </form>
+            )
           )}
 
           {step === 'upi_payment' && createdOrderData && (
