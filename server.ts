@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import { pool, checkDatabaseConnection } from './backend/db.js';
 import { notifyAdminsNewOrder, notifyAdminOrderEvent } from './backend/bot.js';
 import { sendCustomerNotification } from './backend/notification-service.js';
+import multer from 'multer';
 
 dotenv.config();
 
@@ -26,6 +27,38 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Multer storage for payment proof uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `proof-${uniqueSuffix}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPEG, PNG and WebP images are allowed.'));
+    }
+  }
+});
+
+app.use('/uploads', express.static(uploadsDir));
 
 // Rate limiters
 const authLimiter = rateLimit({
@@ -1661,6 +1694,18 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
     res.status(400).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+app.post('/api/upload-payment-proof-image', requireAuth, upload.single('screenshot'), (req: any, res: any) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded or invalid file type. Only JPEG, PNG, WebP images up to 5MB are allowed.' });
+    }
+    const fileUrl = `/uploads/${req.file.filename}`;
+    res.json({ success: true, url: fileUrl });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to upload image' });
   }
 });
 

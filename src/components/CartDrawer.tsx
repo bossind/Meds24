@@ -39,7 +39,35 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   // Prescription & Proof
   const [prescriptionUrl, setPrescriptionUrl] = useState('');
   const [utr, setUtr] = useState('');
-  const [screenshotUrl, setScreenshotUrl] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setError('');
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setError('Please select a valid JPEG, PNG, or WebP image.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image file size must be less than 5 MB.');
+      return;
+    }
+
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -157,8 +185,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
   const handleVerifyUtr = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!utr || !screenshotUrl) {
-      setError('Please enter your UTR transaction reference and payment screenshot URL.');
+    if (!utr.trim()) {
+      setError('Please enter your UTR transaction reference number.');
+      return;
+    }
+    if (!selectedFile) {
+      setError('Please select and upload a payment screenshot.');
       return;
     }
 
@@ -166,10 +198,22 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setError('');
 
     try {
+      const formData = new FormData();
+      formData.append('screenshot', selectedFile);
+
+      const uploadRes = await fetch('/api/upload-payment-proof-image', {
+        method: 'POST',
+        body: formData,
+      });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.error || 'Failed to upload payment screenshot.');
+
+      const uploadedScreenshotUrl = uploadData.url;
+
       const res = await fetch(`/api/orders/${createdOrderData.orderId}/payment-proof`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ utr, screenshotUrl }),
+        body: JSON.stringify({ utr: utr.trim(), screenshotUrl: uploadedScreenshotUrl }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit payment proof');
@@ -177,7 +221,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       setStep('success');
       onCheckoutSuccess(createdOrderData.orderId);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Payment proof submission failed.');
     } finally {
       setLoading(false);
     }
@@ -451,15 +495,58 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Payment Screenshot Image URL *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Upload Payment Screenshot *</label>
+                  <p className="text-[11px] text-slate-500 mb-2">Select a screenshot of your successful UPI transaction from your gallery.</p>
+                  
                   <input
-                    type="url"
-                    required
-                    value={screenshotUrl}
-                    onChange={(e) => setScreenshotUrl(e.target.value)}
-                    placeholder="https://example.com/payment-proof.jpg"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleFileSelect}
+                    className="hidden"
                   />
+
+                  {previewUrl && selectedFile ? (
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={previewUrl}
+                          alt="Payment Proof Preview"
+                          className="w-16 h-16 object-cover rounded-xl border border-slate-200 bg-white"
+                        />
+                        <div className="flex-1 min-w-0 text-xs">
+                          <p className="font-bold text-slate-900 truncate">{selectedFile.name}</p>
+                          <p className="text-slate-500">{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold py-2 rounded-xl text-xs transition-colors"
+                        >
+                          Change Screenshot
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRemoveFile}
+                          className="bg-red-50 hover:bg-red-100 text-red-600 font-semibold px-3 py-2 rounded-xl text-xs transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-700 font-bold py-4 px-4 rounded-2xl text-xs transition-all flex flex-col items-center justify-center gap-1.5"
+                    >
+                      <Upload className="w-5 h-5 text-emerald-600" />
+                      <span>Choose Screenshot</span>
+                      <span className="text-[10px] font-normal text-slate-500">Supports JPEG, PNG, WebP (Max 5MB)</span>
+                    </button>
+                  )}
                 </div>
 
                 <button
