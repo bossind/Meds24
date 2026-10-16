@@ -376,7 +376,7 @@ app.get('/api/referral/validate/:code', async (req, res) => {
 // ==================== PHASE 5: TELEGRAM ADMIN API ENDPOINTS ====================
 
 // Admin Dashboard Stats
-app.get('/api/admin/dashboard', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/dashboard', requireAdminAuth, async (req: any, res: any) => {
   try {
     const totalOrdersRes = await pool.query('SELECT COUNT(*) FROM orders');
     const newOrdersRes = await pool.query("SELECT COUNT(*) FROM orders WHERE status = 'Pending'");
@@ -405,7 +405,7 @@ app.get('/api/admin/dashboard', requireAdmin, async (req: any, res: any) => {
 });
 
 // Admin Orders Management
-app.get('/api/admin/orders', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/orders', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { status, search } = req.query;
     let query = 'SELECT * FROM orders WHERE 1=1';
@@ -430,7 +430,7 @@ app.get('/api/admin/orders', requireAdmin, async (req: any, res: any) => {
   }
 });
 
-app.get('/api/admin/orders/:id', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/orders/:id', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const orderRes = await pool.query('SELECT * FROM orders WHERE id = $1', [id]);
@@ -449,7 +449,7 @@ app.get('/api/admin/orders/:id', requireAdmin, async (req: any, res: any) => {
   }
 });
 
-app.patch('/api/admin/orders/:id/status', requireAdmin, async (req: any, res: any) => {
+app.patch('/api/admin/orders/:id/status', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const { status, paymentStatus } = req.body;
@@ -478,7 +478,7 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, async (req: any, res: an
 });
 
 // Admin Pending Payments Verification
-app.get('/api/admin/payments/pending', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/payments/pending', requireAdminAuth, async (req: any, res: any) => {
   try {
     const result = await pool.query(`
       SELECT pp.*, o.total_amount, o.amount_paid, o.payment_method, o.customer_name, o.customer_phone
@@ -494,7 +494,7 @@ app.get('/api/admin/payments/pending', requireAdmin, async (req: any, res: any) 
 });
 
 // Approve Payment Proof (Transaction-based)
-app.post('/api/admin/payments/:id/approve', requireAdmin, async (req: any, res: any) => {
+app.post('/api/admin/payments/:id/approve', requireAdminAuth, async (req: any, res: any) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -533,7 +533,7 @@ app.post('/api/admin/payments/:id/approve', requireAdmin, async (req: any, res: 
 });
 
 // Reject Payment Proof
-app.post('/api/admin/payments/:id/reject', requireAdmin, async (req: any, res: any) => {
+app.post('/api/admin/payments/:id/reject', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
@@ -554,7 +554,7 @@ app.post('/api/admin/payments/:id/reject', requireAdmin, async (req: any, res: a
 });
 
 // Admin Product & Stock Management
-app.get('/api/admin/products', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/products', requireAdminAuth, async (req: any, res: any) => {
   try {
     const result = await pool.query('SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.id ASC');
     res.json(result.rows);
@@ -563,7 +563,7 @@ app.get('/api/admin/products', requireAdmin, async (req: any, res: any) => {
   }
 });
 
-app.post('/api/admin/products', requireAdmin, async (req: any, res: any) => {
+app.post('/api/admin/products', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { categoryId, name, brand, description, manufacturer, composition, storageInstructions, mrp, price, imageUrl, requiresPrescription, stock, unit, isActive } = req.body;
     
@@ -587,7 +587,7 @@ app.post('/api/admin/products', requireAdmin, async (req: any, res: any) => {
   }
 });
 
-app.put('/api/admin/products/:id', requireAdmin, async (req: any, res: any) => {
+app.put('/api/admin/products/:id', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const { categoryId, name, brand, description, manufacturer, composition, storageInstructions, mrp, price, imageUrl, requiresPrescription, unit, isActive } = req.body;
@@ -610,7 +610,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (req: any, res: any) => {
 });
 
 // Stock Adjustment
-app.post('/api/admin/products/:id/stock', requireAdmin, async (req: any, res: any) => {
+app.post('/api/admin/products/:id/stock', requireAdminAuth, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const { stockAdjustment, reason } = req.body; // e.g. +50 or -10
@@ -636,7 +636,7 @@ app.post('/api/admin/products/:id/stock', requireAdmin, async (req: any, res: an
   }
 });
 
-app.get('/api/admin/stock-movements', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/stock-movements', requireAdminAuth, async (req: any, res: any) => {
   try {
     const result = await pool.query(`
       SELECT sm.*, p.name as product_name
@@ -652,7 +652,7 @@ app.get('/api/admin/stock-movements', requireAdmin, async (req: any, res: any) =
 });
 
 // Prescriptions & Custom Requests
-app.get('/api/admin/prescriptions', requireAdmin, async (req: any, res: any) => {
+app.get('/api/admin/prescriptions', requireAdminAuth, async (req: any, res: any) => {
   try {
     const result = await pool.query(`
       SELECT o.id as order_id, o.customer_name, o.prescription_url, o.created_at, o.status
