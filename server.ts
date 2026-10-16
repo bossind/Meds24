@@ -9,7 +9,7 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { pool, checkDatabaseConnection } from './backend/db.js';
-import { notifyAdminsNewOrder } from './backend/bot.js';
+import { notifyAdminsNewOrder, notifyAdminOrderEvent } from './backend/bot.js';
 
 dotenv.config();
 
@@ -450,9 +450,34 @@ app.get('/api/admin/orders/:id', requireAdminAuth, async (req: any, res: any) =>
 });
 
 app.patch('/api/admin/orders/:id/status', requireAdminAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const { id } = req.params;
-    const { status, paymentStatus } = req.body;
+    const { status, paymentStatus, adminNotes, reason } = req.body;
+
+    const orderRes = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [id]);
+    if (orderRes.rows.length === 0) throw new Error('Order not found.');
+    const order = orderRes.rows[0];
+
+    const prevStatus = order.status;
+    const newStatus = status || prevStatus;
+    const newPaymentStatus = paymentStatus || order.payment_status;
+
+    if (['Cancelled', 'Rejected'].includes(newStatus) && !['Cancelled', 'Rejected'].includes(prevStatus)) {
+      const itemsRes = await client.query('SELECT product_id, quantity FROM order_items WHERE order_id = $1', [id]);
+      for (const item of itemsRes.rows) {
+        if (item.product_id) {
+          await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [item.quantity, item.product_id]);
+          await client.query(
+            `INSERT INTO stock_movements (product_id, change_quantity, previous_stock, new_stock, reason, admin_name)
+             SELECT $1, $2, stock - $2, stock, $3, $4 FROM products WHERE id = $1`,
+            [item.product_id, item.quantity, `Order #${id} ${newStatus}`, req.admin.name]
+          );
+        }
+      }
+    }
+
     let query = 'UPDATE orders SET updated_at = CURRENT_TIMESTAMP';
     const params: any[] = [];
 
@@ -464,16 +489,35 @@ app.patch('/api/admin/orders/:id/status', requireAdminAuth, async (req: any, res
       params.push(paymentStatus);
       query += `, payment_status = $${params.length}`;
     }
+    if (adminNotes !== undefined) {
+      params.push(adminNotes);
+      query += `, admin_notes = $${params.length}`;
+    }
 
     params.push(id);
     query += ` WHERE id = $${params.length} RETURNING *`;
 
-    const result = await pool.query(query, params);
-    await logAudit(req.admin.id, req.admin.name, 'UPDATE_ORDER_STATUS', 'order', parseInt(id), `Status: ${status}, PaymentStatus: ${paymentStatus}`);
+    const result = await client.query(query, params);
+    const updatedOrder = result.rows[0];
 
-    res.json({ success: true, order: result.rows[0] });
+    if (newStatus !== prevStatus) {
+      await client.query(
+        `INSERT INTO order_status_history (order_id, previous_status, new_status, changed_by, reason) VALUES ($1, $2, $3, $4, $5)`,
+        [id, prevStatus, newStatus, req.admin.name, reason || adminNotes || 'Admin status update']
+      );
+    }
+
+    await client.query('COMMIT');
+    await logAudit(req.admin.id, req.admin.name, 'UPDATE_ORDER_STATUS', 'order', parseInt(id), `Status: ${newStatus}, PaymentStatus: ${newPaymentStatus}`);
+
+    notifyAdminOrderEvent(parseInt(id), `Status Updated to ${newStatus}`, `Changed by Admin ${req.admin.name}. Notes: ${adminNotes || reason || 'N/A'}`);
+
+    res.json({ success: true, order: updatedOrder });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -1062,6 +1106,15 @@ app.post('/api/orders/:id/payment-proof', requireAuth, async (req: any, res: any
   }
 });
 
+app.get('/api/orders', requireAuth, async (req: any, res: any) => {
+  try {
+    const ordersRes = await pool.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json(ordersRes.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/orders/:id', requireAuth, async (req: any, res: any) => {
   try {
     const { id } = req.params;
@@ -1069,10 +1122,56 @@ app.get('/api/orders/:id', requireAuth, async (req: any, res: any) => {
     if (orderRes.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
     const itemsRes = await pool.query('SELECT oi.*, p.name, p.image_url FROM order_items oi LEFT JOIN products p ON oi.product_id = p.id WHERE oi.order_id = $1', [id]);
     const proofsRes = await pool.query('SELECT * FROM payment_proofs WHERE order_id = $1', [id]);
+    const historyRes = await pool.query('SELECT * FROM order_status_history WHERE order_id = $1 ORDER BY created_at ASC', [id]);
     
-    res.json({ order: orderRes.rows[0], items: itemsRes.rows, proofs: proofsRes.rows });
+    res.json({ order: orderRes.rows[0], items: itemsRes.rows, proofs: proofsRes.rows, history: historyRes.rows });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/orders/:id/cancel', requireAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const orderRes = await client.query('SELECT * FROM orders WHERE id = $1 AND user_id = $2 FOR UPDATE', [id, req.user.id]);
+    if (orderRes.rows.length === 0) throw new Error('Order not found.');
+    const order = orderRes.rows[0];
+
+    if (!['Pending Confirmation', 'Confirmed'].includes(order.status)) {
+      throw new Error(`Order cannot be cancelled at stage: ${order.status}`);
+    }
+
+    const itemsRes = await client.query('SELECT product_id, quantity FROM order_items WHERE order_id = $1', [id]);
+    for (const item of itemsRes.rows) {
+      if (item.product_id) {
+        await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [item.quantity, item.product_id]);
+        await client.query(
+          `INSERT INTO stock_movements (product_id, change_quantity, previous_stock, new_stock, reason, admin_name)
+           SELECT $1, $2, stock - $2, stock, $3, 'System / Customer' FROM products WHERE id = $1`,
+          [item.product_id, item.quantity, `Order #${id} Cancelled by Customer`]
+        );
+      }
+    }
+
+    await client.query("UPDATE orders SET status = 'Cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [id]);
+    await client.query(
+      `INSERT INTO order_status_history (order_id, previous_status, new_status, changed_by, reason) VALUES ($1, $2, 'Cancelled', $3, $4)`,
+      [id, order.status, req.user.name, reason || 'Cancelled by customer']
+    );
+
+    await client.query('COMMIT');
+    notifyAdminOrderEvent(parseInt(id), 'Order Cancelled', `Customer ${req.user.name} cancelled order #${id}. Reason: ${reason || 'None'}`);
+
+    res.json({ success: true, message: 'Order cancelled and stock restored successfully.' });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

@@ -135,10 +135,22 @@ CREATE TABLE IF NOT EXISTS orders (
     payment_status VARCHAR(40) DEFAULT 'Awaiting Payment' CHECK (payment_status IN ('Awaiting Payment', 'Proof Submitted', 'Verification Pending', 'Approved', 'Rejected', 'Expired', 'Refund Pending', 'Refunded')),
     amount_paid DECIMAL(10, 2) DEFAULT 0.00,
     remaining_balance DECIMAL(10, 2) DEFAULT 0.00,
-    status VARCHAR(30) DEFAULT 'Pending' CHECK (status IN ('Pending Confirmation', 'Awaiting Payment', 'Payment Verification', 'Confirmed', 'Preparing', 'Ready for Dispatch', 'Out for Delivery', 'Delivered', 'Cancelled')),
+    status VARCHAR(30) DEFAULT 'Pending Confirmation' CHECK (status IN ('Pending Confirmation', 'Confirmed', 'Processing', 'Packed', 'Dispatched', 'Out for Delivery', 'Delivered', 'Cancelled', 'Rejected')),
     prescription_url TEXT,
+    admin_notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Order Status History table
+CREATE TABLE IF NOT EXISTS order_status_history (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+    previous_status VARCHAR(50),
+    new_status VARCHAR(50) NOT NULL,
+    changed_by VARCHAR(150),
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Order Items table

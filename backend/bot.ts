@@ -110,7 +110,7 @@ export async function notifyAdminsNewOrder(orderId: number, customerName: string
     const logCheck = await pool.query('SELECT id FROM notification_logs WHERE order_id = $1 AND chat_id = $2', [orderId, adminChatId]);
     if (logCheck.rows.length > 0) return;
 
-    const message = `🚨 *MEDS24 — NEW ORDER*\n\nOrder ID: \`#MDS-${orderId}\`\nCustomer: ${customerName}\nTotal Amount: ₹${totalAmount}\nPayment Status: Verification Pending\n\nOpen Admin Mini App to review.`;
+    const message = `🚨 *MEDS24 — NEW ORDER*\n\nOrder ID: \`#MDS-${orderId}\`\nCustomer: ${customerName}\nTotal Amount: ₹${totalAmount}\nStatus: Pending Confirmation\n\nOpen Admin Mini App to review.`;
     
     const keyboard = {
       reply_markup: {
@@ -121,9 +121,30 @@ export async function notifyAdminsNewOrder(orderId: number, customerName: string
     };
 
     await bot.sendMessage(adminChatId, message, { parse_mode: 'Markdown', ...keyboard });
-    await pool.query('INSERT INTO notification_logs (order_id, chat_id, status) VALUES ($1, $2, $3)', [orderId, adminChatId, 'Sent']);
+    await pool.query('INSERT INTO notification_logs (order_id, chat_id, status) VALUES ($1, $2, $3)', [orderId, adminChatId, 'Sent']).catch(() => {});
   } catch (err: any) {
     console.error('Failed to send Telegram order notification:', err);
+  }
+}
+
+export async function notifyAdminOrderEvent(orderId: number, eventTitle: string, details: string) {
+  if (!bot) return;
+  try {
+    const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+    if (!adminChatId) return;
+
+    const message = `📢 *MEDS24 — ORDER UPDATE*\n\nOrder ID: \`#MDS-${orderId}\`\nEvent: *${eventTitle}*\n${details}\n\nOpen Admin Mini App for details.`;
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🚀 Open Admin Dashboard', web_app: { url: webAppUrl } }]
+        ]
+      }
+    };
+
+    await bot.sendMessage(adminChatId, message, { parse_mode: 'Markdown', ...keyboard });
+  } catch (err: any) {
+    console.error('Failed to send Telegram event notification:', err);
   }
 }
 

@@ -64,19 +64,45 @@
 
         <!-- TAB 2: ORDERS -->
         <section id="section-orders" class="space-y-4 hidden">
-            <div class="flex gap-2">
+            <div class="flex flex-col sm:flex-row gap-2">
                 <input
                     type="text"
                     id="order-search"
                     oninput="filterOrders()"
-                    placeholder="Search by order ID or customer phone..."
-                    class="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Search by order ID, customer name or phone..."
+                    class="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
                 />
+            </div>
+            <!-- Filter Pills / Tabs -->
+            <div id="order-filters" class="flex gap-2 overflow-x-auto pb-2 text-xs font-semibold">
+                <button onclick="setOrderStatusFilter('all')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-emerald-600 text-white whitespace-nowrap shadow-sm" data-status="all">All</button>
+                <button onclick="setOrderStatusFilter('Pending Confirmation')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Pending Confirmation">Pending</button>
+                <button onclick="setOrderStatusFilter('Confirmed')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Confirmed">Confirmed</button>
+                <button onclick="setOrderStatusFilter('Processing')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Processing">Processing</button>
+                <button onclick="setOrderStatusFilter('Packed')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Packed">Packed</button>
+                <button onclick="setOrderStatusFilter('Dispatched')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Dispatched">Dispatched</button>
+                <button onclick="setOrderStatusFilter('Out for Delivery')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Out for Delivery">Out for Delivery</button>
+                <button onclick="setOrderStatusFilter('Delivered')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Delivered">Delivered</button>
+                <button onclick="setOrderStatusFilter('Cancelled')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Cancelled">Cancelled</button>
+                <button onclick="setOrderStatusFilter('Rejected')" class="order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap" data-status="Rejected">Rejected</button>
             </div>
             <div id="orders-list" class="space-y-3">
                 <div class="p-8 text-center text-slate-400 text-xs">Loading orders...</div>
             </div>
         </section>
+
+        <!-- Order Details Modal -->
+        <div id="order-modal" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm hidden flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+                <div class="bg-emerald-700 text-white p-4 flex justify-between items-center">
+                    <h3 id="modal-order-title" class="font-bold text-sm">Order Details</h3>
+                    <button onclick="closeOrderModal()" class="text-white/80 hover:text-white p-1">✕</button>
+                </div>
+                <div id="modal-order-body" class="p-6 overflow-y-auto space-y-4 flex-1 text-xs">
+                    {/* Dynamic Order Details */}
+                </div>
+            </div>
+        </div>
 
         <!-- TAB 3: PENDING PAYMENTS -->
         <section id="section-payments" class="space-y-4 hidden">
@@ -163,6 +189,20 @@
             }
         }
 
+        let currentStatusFilter = 'all';
+
+        function setOrderStatusFilter(status) {
+            currentStatusFilter = status;
+            document.querySelectorAll('.order-filter-btn').forEach(btn => {
+                if (btn.getAttribute('data-status') === status) {
+                    btn.className = 'order-filter-btn px-3 py-1.5 rounded-lg bg-emerald-600 text-white whitespace-nowrap shadow-sm';
+                } else {
+                    btn.className = 'order-filter-btn px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 whitespace-nowrap';
+                }
+            });
+            filterOrders();
+        }
+
         function renderOrders(orders) {
             const listEl = document.getElementById('orders-list');
             if (orders.length === 0) {
@@ -171,7 +211,7 @@
             }
 
             listEl.innerHTML = orders.map(o => `
-                <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                <div onclick="openOrderDetails(${o.id})" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3 cursor-pointer hover:border-emerald-500 transition-colors">
                     <div class="flex justify-between items-start">
                         <div>
                             <div class="flex items-center gap-2">
@@ -185,15 +225,7 @@
                     </div>
                     <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
                         <span class="text-slate-400">Payment: ${o.payment_method} (${o.payment_status})</span>
-                        <select onchange="updateOrderStatus(${o.id}, this.value)" class="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 font-semibold">
-                            <option value="Pending Confirmation" ${o.status === 'Pending Confirmation' ? 'selected' : ''}>Pending Confirmation</option>
-                            <option value="Confirmed" ${o.status === 'Confirmed' ? 'selected' : ''}>Confirmed</option>
-                            <option value="Preparing" ${o.status === 'Preparing' ? 'selected' : ''}>Preparing</option>
-                            <option value="Ready for Dispatch" ${o.status === 'Ready for Dispatch' ? 'selected' : ''}>Ready for Dispatch</option>
-                            <option value="Out for Delivery" ${o.status === 'Out for Delivery' ? 'selected' : ''}>Out for Delivery</option>
-                            <option value="Delivered" ${o.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
-                            <option value="Cancelled" ${o.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
-                        </select>
+                        <span class="text-emerald-700 font-bold hover:underline">View Details &rarr;</span>
                     </div>
                 </div>
             `).join('');
@@ -201,23 +233,157 @@
 
         function filterOrders() {
             const query = document.getElementById('order-search').value.toLowerCase();
-            const filtered = allOrders.filter(o => 
-                String(o.id).includes(query) || o.customer_phone.includes(query) || o.customer_name.toLowerCase().includes(query)
-            );
+            const filtered = allOrders.filter(o => {
+                const matchesStatus = currentStatusFilter === 'all' || o.status === currentStatusFilter;
+                const matchesSearch = String(o.id).includes(query) || o.customer_phone.includes(query) || o.customer_name.toLowerCase().includes(query);
+                return matchesStatus && matchesSearch;
+            });
             renderOrders(filtered);
         }
 
-        async function updateOrderStatus(orderId, status) {
+        async function updateOrderStatus(orderId, status, reason = '') {
             try {
                 const res = await fetch(`/api/admin/orders/${orderId}/status`, {
                     method: 'PATCH',
                     headers: apiHeaders,
-                    body: JSON.stringify({ status })
+                    body: JSON.stringify({ status, reason })
                 });
-                if (!res.ok) alert('Failed to update status');
-                else loadOrders();
+                if (!res.ok) {
+                    const data = await res.json();
+                    alert(data.error || 'Failed to update status');
+                } else {
+                    loadOrders();
+                    loadAllData();
+                }
             } catch (err) {
                 alert('Error updating status');
+            }
+        }
+
+        async function openOrderDetails(orderId) {
+            const modal = document.getElementById('order-modal');
+            const body = document.getElementById('modal-order-body');
+            const title = document.getElementById('modal-order-title');
+            title.innerText = `Order #${orderId} Details`;
+            body.innerHTML = '<div class="p-8 text-center text-slate-400">Loading order details...</div>';
+            modal.classList.remove('hidden');
+
+            try {
+                const res = await fetch(`/api/admin/orders/${orderId}`, { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load order details');
+                const data = await res.json();
+                const o = data.order;
+                const items = data.items;
+                const proofs = data.proofs;
+                const history = data.history || [];
+
+                body.innerHTML = `
+                    <div class="space-y-4">
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                            <div class="flex justify-between">
+                                <span class="font-bold text-slate-900">${o.customer_name}</span>
+                                <span class="font-bold text-emerald-700">₹${o.total_amount}</span>
+                            </div>
+                            <p class="text-slate-600">Phone: ${o.customer_phone}</p>
+                            <p class="text-slate-600">Email: ${o.customer_email}</p>
+                            <p class="text-slate-600">Address: ${o.shipping_address}</p>
+                            <p class="text-slate-500">Payment: ${o.payment_method} (${o.payment_status})</p>
+                        </div>
+
+                        <div>
+                            <h4 class="font-bold text-slate-800 mb-2">Ordered Items (${items.length})</h4>
+                            <div class="space-y-1.5">
+                                ${items.map(i => `
+                                    <div class="flex justify-between items-center bg-white p-2.5 rounded-lg border border-slate-100">
+                                        <span>${i.name} × ${i.quantity}</span>
+                                        <span class="font-semibold text-emerald-700">₹${i.unit_price * i.quantity}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        ${proofs.length > 0 ? `
+                            <div>
+                                <h4 class="font-bold text-slate-800 mb-2">Payment Proofs</h4>
+                                ${proofs.map(p => `
+                                    <div class="bg-blue-50 p-2.5 rounded-lg border border-blue-100 flex justify-between items-center">
+                                        <span>UTR: <b>${p.utr}</b> [${p.status}]</span>
+                                        <a href="${p.screenshot_url}" target="_blank" class="text-blue-700 underline font-semibold">View Proof</a>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+
+                        <div>
+                            <h4 class="font-bold text-slate-800 mb-2">Order Status History</h4>
+                            <div class="space-y-1 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                ${history.length === 0 ? '<p class="text-slate-400">No history logged yet.</p>' : history.map(h => `
+                                    <div class="text-[11px] text-slate-600 flex justify-between">
+                                        <span><b>${h.new_status}</b> (${h.changed_by || 'Admin'})</span>
+                                        <span class="text-slate-400">${new Date(h.created_at).toLocaleString()}</span>
+                                    </div>
+                                    ${h.reason ? `<p class="text-[10px] text-slate-500 italic">Reason: ${h.reason}</p>` : ''}
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div class="space-y-2 pt-2 border-t border-slate-200">
+                            <label class="font-bold text-slate-700">Change Status & Actions</label>
+                            <div class="flex gap-2">
+                                <select id="modal-status-select" class="flex-1 bg-slate-50 border border-slate-300 rounded-lg p-2 font-semibold">
+                                    <option value="Pending Confirmation" ${o.status === 'Pending Confirmation' ? 'selected' : ''}>Pending Confirmation</option>
+                                    <option value="Confirmed" ${o.status === 'Confirmed' ? 'selected' : ''}>Confirmed</option>
+                                    <option value="Processing" ${o.status === 'Processing' ? 'selected' : ''}>Processing</option>
+                                    <option value="Packed" ${o.status === 'Packed' ? 'selected' : ''}>Packed</option>
+                                    <option value="Dispatched" ${o.status === 'Dispatched' ? 'selected' : ''}>Dispatched</option>
+                                    <option value="Out for Delivery" ${o.status === 'Out for Delivery' ? 'selected' : ''}>Out for Delivery</option>
+                                    <option value="Delivered" ${o.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
+                                    <option value="Cancelled" ${o.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+                                    <option value="Rejected" ${o.status === 'Rejected' ? 'selected' : ''}>Rejected</option>
+                                </select>
+                                <button onclick="saveOrderStatusFromModal(${o.id})" class="bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold">Update</button>
+                            </div>
+                            <div class="flex gap-2 mt-2">
+                                <input type="text" id="modal-admin-notes" placeholder="Add internal admin note..." value="${o.admin_notes || ''}" class="flex-1 bg-slate-50 border border-slate-300 rounded-lg px-3 py-2" />
+                                <button onclick="saveAdminNotes(${o.id})" class="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold">Save Note</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                body.innerHTML = '<div class="p-8 text-center text-red-500">Failed to load order details.</div>';
+            }
+        }
+
+        function closeOrderModal() {
+            document.getElementById('order-modal').classList.add('hidden');
+        }
+
+        async function saveOrderStatusFromModal(orderId) {
+            const status = document.getElementById('modal-status-select').value;
+            let reason = '';
+            if (status === 'Rejected' || status === 'Cancelled') {
+                reason = prompt('Enter reason for ' + status + ':') || '';
+            }
+            await updateOrderStatus(orderId, status, reason);
+            closeOrderModal();
+        }
+
+        async function saveAdminNotes(orderId) {
+            const adminNotes = document.getElementById('modal-admin-notes').value;
+            try {
+                const res = await fetch(`/api/admin/orders/${orderId}/status`, {
+                    method: 'PATCH',
+                    headers: apiHeaders,
+                    body: JSON.stringify({ adminNotes })
+                });
+                if (!res.ok) alert('Failed to save notes');
+                else {
+                    alert('Admin notes saved successfully.');
+                    loadOrders();
+                }
+            } catch {
+                alert('Error saving notes');
             }
         }
 
