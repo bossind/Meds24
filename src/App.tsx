@@ -226,6 +226,7 @@ export default function App() {
         onLogout={handleLogout}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        onSelectOrder={(id) => setTrackedOrderId(id)}
       />
 
       {/* Main Content */}
@@ -326,7 +327,7 @@ export default function App() {
           setIsTrackingOpen(false);
           setTrackedOrderId(null);
         }}
-        defaultOrderId={trackedOrderId}
+        orderId={trackedOrderId}
       />
 
       {/* Hidden Settings & Telegram Config Modal */}

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { ShoppingBag, Search, User as UserIcon, ShieldCheck, FileText, Truck, Package } from 'lucide-react';
 import { User } from '../types';
+import { NotificationBell } from './NotificationBell';
 
 interface HeaderProps {
   cartCount: number;
@@ -14,6 +15,7 @@ interface HeaderProps {
   onLogout: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  onSelectOrder: (orderId: number) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -28,6 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   searchQuery,
   onSearchChange,
+  onSelectOrder,
 }) => {
   const [holdProgress, setHoldProgress] = useState(0);
   const holdTimerRef = useRef<any>(null);
@@ -124,6 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Zone 3: Primary Actions */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <NotificationBell currentUser={currentUser} onSelectOrder={onSelectOrder} />
           {currentUser ? (
             <div className="flex items-center gap-2 sm:gap-3">
               <button

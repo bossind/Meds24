@@ -266,3 +266,112 @@ CREATE TABLE IF NOT EXISTS system_configs (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Suppliers table
+CREATE TABLE IF NOT EXISTS suppliers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    contact_person VARCHAR(100),
+    phone VARCHAR(20) NOT NULL,
+    email VARCHAR(150),
+    address TEXT,
+    gstin VARCHAR(50),
+    rating DECIMAL(3,2) DEFAULT 5.00,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Medicine Batches table
+CREATE TABLE IF NOT EXISTS medicine_batches (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+    batch_number VARCHAR(100) NOT NULL,
+    manufacturer_name VARCHAR(150),
+    manufacturing_date DATE,
+    expiry_date DATE NOT NULL,
+    purchase_price DECIMAL(10, 2) NOT NULL,
+    selling_price DECIMAL(10, 2) NOT NULL,
+    initial_quantity INTEGER NOT NULL CHECK (initial_quantity >= 0),
+    available_quantity INTEGER NOT NULL CHECK (available_quantity >= 0),
+    reserved_quantity INTEGER DEFAULT 0 CHECK (reserved_quantity >= 0),
+    status VARCHAR(30) DEFAULT 'Active' CHECK (status IN ('Active', 'Expiring Soon', 'Expired', 'Exhausted', 'Written Off')),
+    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Purchase Orders table
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    id SERIAL PRIMARY KEY,
+    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+    order_date DATE DEFAULT CURRENT_DATE,
+    expected_date DATE,
+    status VARCHAR(30) DEFAULT 'Draft' CHECK (status IN ('Draft', 'Ordered', 'Received', 'Cancelled')),
+    total_amount DECIMAL(10, 2) DEFAULT 0.00,
+    admin_notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Purchase Order Items table
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+    id SERIAL PRIMARY KEY,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price DECIMAL(10, 2) NOT NULL,
+    received_quantity INTEGER DEFAULT 0 CHECK (received_quantity >= 0)
+);
+
+-- Batch Allocations table for FEFO order tracking
+CREATE TABLE IF NOT EXISTS batch_allocations (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+    batch_id INTEGER REFERENCES medicine_batches(id) ON DELETE CASCADE,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Customer Notifications table
+CREATE TABLE IF NOT EXISTS customer_notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL CHECK (type IN ('order', 'payment', 'delivery', 'account')),
+    title VARCHAR(200) NOT NULL,
+    message TEXT NOT NULL,
+    order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    is_read BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Telegram Account Links table
+CREATE TABLE IF NOT EXISTS telegram_links (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    telegram_id BIGINT UNIQUE NOT NULL,
+    username VARCHAR(100),
+    first_name VARCHAR(150),
+    linking_token VARCHAR(100),
+    token_expires_at TIMESTAMP WITH TIME ZONE,
+    is_linked BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Notification Preferences table
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    telegram_order_updates BOOLEAN DEFAULT true,
+    telegram_payment_updates BOOLEAN DEFAULT true,
+    telegram_delivery_updates BOOLEAN DEFAULT true,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Notification Delivery Attempts table for admin tracking & retries
+CREATE TABLE IF NOT EXISTS notification_delivery_attempts (
+    id SERIAL PRIMARY KEY,
+    notification_id INTEGER REFERENCES customer_notifications(id) ON DELETE CASCADE,
+    channel VARCHAR(30) DEFAULT 'telegram',
+    status VARCHAR(30) DEFAULT 'Pending' CHECK (status IN ('Pending', 'Sent', 'Failed', 'Retried')),
+    error_message TEXT,
+    attempt_count INTEGER DEFAULT 1,
+    last_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+

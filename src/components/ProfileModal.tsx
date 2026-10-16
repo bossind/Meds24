@@ -17,7 +17,69 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   onUpdateUser,
   onLogout,
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'edit' | 'password' | 'verify'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'edit' | 'password' | 'verify' | 'notifications'>('profile');
+
+  // Notifications & Telegram states
+  const [telegramInfo, setTelegramInfo] = useState<any>(null);
+  const [notifPrefs, setNotifPrefs] = useState({
+    telegram_order_updates: true,
+    telegram_payment_updates: true,
+    telegram_delivery_updates: true
+  });
+
+  const fetchNotificationsConfig = async () => {
+    try {
+      const [linkRes, prefRes] = await Promise.all([
+        fetch('/api/customer/telegram/link-status', { credentials: 'include' }),
+        fetch('/api/customer/notification-preferences', { credentials: 'include' })
+      ]);
+      if (linkRes.ok) {
+        const linkData = await linkRes.json();
+        setTelegramInfo(linkData);
+      }
+      if (prefRes.ok) {
+        const prefData = await prefRes.json();
+        setNotifPrefs(prefData);
+      }
+    } catch (err) {
+      console.error('Error fetching notifications config:', err);
+    }
+  };
+
+  const handleUpdatePrefs = async (key: string, value: boolean) => {
+    const updated = { ...notifPrefs, [key]: value };
+    setNotifPrefs(updated);
+    try {
+      await fetch('/api/customer/notification-preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegramOrderUpdates: updated.telegram_order_updates,
+          telegramPaymentUpdates: updated.telegram_payment_updates,
+          telegramDeliveryUpdates: updated.telegram_delivery_updates
+        }),
+        credentials: 'include'
+      });
+    } catch (err) {
+      console.error('Failed to update preferences:', err);
+    }
+  };
+
+  const handleUnlinkTelegram = async () => {
+    if (!confirm('Are you sure you want to unlink your Telegram account?')) return;
+    try {
+      const res = await fetch('/api/customer/telegram/unlink', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      if (res.ok) {
+        setTelegramInfo({ isLinked: false, linkingToken: 'MEDS-' + Math.random().toString(36).substring(2, 8).toUpperCase() });
+        setSuccessMsg('Telegram unlinked successfully.');
+      }
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   // Edit states
   const [name, setName] = useState(user.name);
@@ -169,7 +231,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-200 bg-slate-50 text-xs font-semibold">
+        <div className="flex border-b border-slate-200 bg-slate-50 text-[11px] sm:text-xs font-semibold">
           <button
             onClick={() => { setActiveTab('profile'); setError(''); setSuccessMsg(''); }}
             className={`flex-1 py-3 text-center transition-colors ${activeTab === 'profile' ? 'bg-white text-emerald-700 border-b-2 border-emerald-600' : 'text-slate-600 hover:text-slate-900'}`}
@@ -180,13 +242,19 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             onClick={() => { setActiveTab('edit'); setError(''); setSuccessMsg(''); }}
             className={`flex-1 py-3 text-center transition-colors ${activeTab === 'edit' ? 'bg-white text-emerald-700 border-b-2 border-emerald-600' : 'text-slate-600 hover:text-slate-900'}`}
           >
-            Edit Profile
+            Edit
           </button>
           <button
             onClick={() => { setActiveTab('password'); setError(''); setSuccessMsg(''); }}
             className={`flex-1 py-3 text-center transition-colors ${activeTab === 'password' ? 'bg-white text-emerald-700 border-b-2 border-emerald-600' : 'text-slate-600 hover:text-slate-900'}`}
           >
             Security
+          </button>
+          <button
+            onClick={() => { setActiveTab('notifications'); setError(''); setSuccessMsg(''); fetchNotificationsConfig(); }}
+            className={`flex-1 py-3 text-center transition-colors ${activeTab === 'notifications' ? 'bg-white text-emerald-700 border-b-2 border-emerald-600' : 'text-slate-600 hover:text-slate-900'}`}
+          >
+            Notifications
           </button>
         </div>
 
@@ -386,6 +454,84 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               </form>
             </div>
           )}
+
+          {activeTab === 'notifications' && (
+            <div className="space-y-6">
+              {/* Telegram Linking Section */}
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Telegram Account Integration</h4>
+                {telegramInfo?.isLinked ? (
+                  <div className="flex justify-between items-center bg-emerald-50 border border-emerald-200 p-3 rounded-xl">
+                    <div>
+                      <span className="text-xs font-bold text-emerald-800 block">Telegram Connected</span>
+                      <span className="text-[11px] text-emerald-600">ID: {telegramInfo.telegramUser.telegram_id}</span>
+                    </div>
+                    <button
+                      onClick={handleUnlinkTelegram}
+                      className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-white border border-red-200 hover:bg-red-50 rounded-xl transition-colors"
+                    >
+                      Unlink
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-600">
+                      Link your Telegram account to receive instant order tracking & delivery notifications on Telegram.
+                    </p>
+                    <div className="bg-white border border-slate-200 p-3 rounded-xl flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Linking Token</span>
+                        <code className="text-sm font-mono font-bold text-emerald-700">{telegramInfo?.linkingToken || 'Loading...'}</code>
+                      </div>
+                      <a
+                        href={`https://t.me/meds24_bot?start=${telegramInfo?.linkingToken || ''}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors"
+                      >
+                        Open Bot to Link
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Notification Preferences */}
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Telegram Notification Preferences</h4>
+                <div className="space-y-2.5">
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-xs text-slate-700 font-medium">Order Status Updates</span>
+                    <input
+                      type="checkbox"
+                      checked={notifPrefs.telegram_order_updates}
+                      onChange={(e) => handleUpdatePrefs('telegram_order_updates', e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-xs text-slate-700 font-medium">Payment Verification Updates</span>
+                    <input
+                      type="checkbox"
+                      checked={notifPrefs.telegram_payment_updates}
+                      onChange={(e) => handleUpdatePrefs('telegram_payment_updates', e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-xs text-slate-700 font-medium">Delivery & Dispatch Updates</span>
+                    <input
+                      type="checkbox"
+                      checked={notifPrefs.telegram_delivery_updates}
+                      onChange={(e) => handleUpdatePrefs('telegram_delivery_updates', e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
     </div>

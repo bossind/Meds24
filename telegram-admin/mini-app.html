@@ -19,10 +19,18 @@
     <!-- Navigation Tabs -->
     <nav class="bg-white border-b border-slate-200 sticky top-16 z-10 flex overflow-x-auto text-xs font-bold text-slate-600">
         <button onclick="switchTab('dashboard')" id="tab-dashboard" class="px-4 py-3 border-b-2 border-emerald-600 text-emerald-700 whitespace-nowrap">Dashboard</button>
+        <button onclick="switchTab('analytics')" id="tab-analytics" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Analytics</button>
         <button onclick="switchTab('orders')" id="tab-orders" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Orders</button>
         <button onclick="switchTab('payments')" id="tab-payments" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Pending Payments</button>
-        <button onclick="switchTab('products')" id="tab-products" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Products & Stock</button>
-        <button onclick="switchTab('settings')" id="tab-settings" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Payment Settings</button>
+        <button onclick="switchTab('products')" id="tab-products" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Products</button>
+        <button onclick="switchTab('suppliers')" id="tab-suppliers" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Suppliers</button>
+        <button onclick="switchTab('pos')" id="tab-pos" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Purchase Orders</button>
+        <button onclick="switchTab('batches')" id="tab-batches" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Batches & Expiry</button>
+        <button onclick="switchTab('reports')" id="tab-reports" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Reports</button>
+        <button onclick="switchTab('notifications')" id="tab-notifications" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Notifications & Delivery</button>
+        <button onclick="switchTab('audit')" id="tab-audit" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Audit Logs</button>
+        <button onclick="switchTab('settings')" id="tab-settings" class="px-4 py-3 border-b-2 border-transparent whitespace-nowrap">Settings</button>
+
     </nav>
 
 
@@ -128,20 +136,121 @@
             </div>
         </section>
 
-        <!-- TAB 5: PAYMENT SETTINGS -->
-        <section id="section-settings" class="space-y-4 hidden">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
-                <div class="flex justify-between items-center border-b border-slate-100 pb-4">
+        <!-- TAB 5: SUPPLIERS -->
+        <section id="section-suppliers" class="space-y-4 hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="font-bold text-sm text-slate-800">Supplier Directory</h2>
+                <button onclick="openAddSupplierModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm">+ Add Supplier</button>
+            </div>
+            <div id="suppliers-list" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="p-8 text-center text-slate-400 text-xs">Loading suppliers...</div>
+            </div>
+        </section>
+
+        <!-- TAB 6: PURCHASE ORDERS -->
+        <section id="section-pos" class="space-y-4 hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="font-bold text-sm text-slate-800">Purchase Orders (PO)</h2>
+                <button onclick="openCreatePOModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm">+ Create PO</button>
+            </div>
+            <div id="pos-list" class="space-y-3">
+                <div class="p-8 text-center text-slate-400 text-xs">Loading purchase orders...</div>
+            </div>
+        </section>
+
+        <!-- TAB 7: BATCHES & EXPIRY -->
+        <section id="section-batches" class="space-y-4 hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="font-bold text-sm text-slate-800">Medicine Batches & Expiry Management</h2>
+                <button onclick="openAddBatchModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm">+ Receive Batch</button>
+            </div>
+            <div id="batches-list" class="space-y-3">
+                <div class="p-8 text-center text-slate-400 text-xs">Loading batches...</div>
+            </div>
+        </section>
+
+        <!-- TAB 8: REPORTS & EXPORT -->
+        <section id="section-reports" class="space-y-4 hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="font-bold text-sm text-slate-800">Inventory Valuation & Expiry Alerts</h2>
+                <a href="/api/admin/inventory/export-csv" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm">📥 Export Batches CSV</a>
+            </div>
+            <div id="reports-container" class="space-y-4">
+                <div class="p-8 text-center text-slate-400 text-xs">Loading inventory reports...</div>
+            </div>
+        </section>
+
+        <!-- TAB 10: NOTIFICATIONS & DELIVERY -->
+        <section id="section-notifications" class="space-y-4 hidden">
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex justify-between items-center">
                     <div>
-                        <h2 class="font-bold text-base text-slate-900">Payment & UPI Gateway Settings</h2>
-                        <p class="text-xs text-slate-500">Configure business UPI IDs, display names, QR codes, and enable/disable payment methods.</p>
+                        <h2 class="font-bold text-sm text-slate-800">Notification Delivery Status & Retries</h2>
+                        <p class="text-xs text-slate-500">Monitor Telegram notification attempts and retry failed deliveries.</p>
                     </div>
-                    <button onclick="savePaymentSettings()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm">
-                        Save Changes
-                    </button>
+                    <button onclick="loadAdminNotifications()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold">Refresh</button>
                 </div>
-                <div id="payment-settings-container" class="space-y-6">
-                    <div class="text-center text-slate-400 text-xs py-8">Loading payment settings...</div>
+                <div id="admin-notifications-list" class="divide-y divide-slate-100">
+                    <div class="p-6 text-center text-xs text-slate-400">Loading delivery attempts...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: ANALYTICS -->
+        <section id="section-analytics" class="space-y-6 hidden">
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div>
+                        <h2 class="font-bold text-sm text-slate-800">Advanced Business Analytics & Financial Metrics</h2>
+                        <p class="text-xs text-slate-500">Real-time PostgreSQL analytics across orders, revenue, inventory, and customers.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select id="analytics-period" onchange="loadAnalytics()" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-emerald-500">
+                            <option value="today">Today</option>
+                            <option value="yesterday">Yesterday</option>
+                            <option value="last7">Last 7 Days</option>
+                            <option value="last30" selected>Last 30 Days</option>
+                            <option value="this_month">This Month</option>
+                            <option value="prev_month">Previous Month</option>
+                        </select>
+                        <button onclick="loadAnalytics()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold">Refresh</button>
+                    </div>
+                </div>
+
+                <!-- CSV Reports Quick Export Bar -->
+                <div class="flex flex-wrap gap-2 pt-2 border-t border-slate-100 text-xs">
+                    <span class="font-bold text-slate-700 self-center mr-1">Export CSV Reports:</span>
+                    <button onclick="exportCsv('orders')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">📥 Orders</button>
+                    <button onclick="exportCsv('sales')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">📥 Sales</button>
+                    <button onclick="exportCsv('payments')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">📥 Payments</button>
+                    <button onclick="exportCsv('products')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">📥 Products</button>
+                    <button onclick="exportCsv('inventory')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">📥 Inventory</button>
+                    <button onclick="exportCsv('audit-logs')" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">📥 Audit Logs</button>
+                </div>
+            </div>
+
+            <!-- Analytics Cards Grid -->
+            <div id="analytics-content" class="space-y-6">
+                <div class="p-8 text-center text-slate-400 text-xs">Loading analytics metrics...</div>
+            </div>
+        </section>
+
+        <!-- TAB: AUDIT LOGS -->
+        <section id="section-audit" class="space-y-4 hidden">
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div>
+                        <h2 class="font-bold text-sm text-slate-800">Administrative Audit Logs</h2>
+                        <p class="text-xs text-slate-500">Append-only secure audit trail for sensitive administrative actions and security events.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="audit-search" oninput="loadAuditLogs()" placeholder="Search action or admin..." class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500" />
+                        <button onclick="exportCsv('audit-logs')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold">📥 Export CSV</button>
+                    </div>
+                </div>
+
+                <div id="audit-logs-list" class="divide-y divide-slate-100">
+                    <div class="p-8 text-center text-xs text-slate-400">Loading audit logs...</div>
                 </div>
             </div>
         </section>
@@ -166,17 +275,212 @@
         };
 
         function switchTab(tab) {
-            ['dashboard', 'orders', 'payments', 'products', 'settings'].forEach(t => {
-                document.getElementById(`section-${t}`).classList.add('hidden');
-                document.getElementById(`tab-${t}`).className = 'px-4 py-3 border-b-2 border-transparent text-slate-600 whitespace-nowrap';
+            ['dashboard', 'analytics', 'orders', 'payments', 'products', 'suppliers', 'pos', 'batches', 'reports', 'notifications', 'audit', 'settings'].forEach(t => {
+                const el = document.getElementById(`section-${t}`);
+                const tabEl = document.getElementById(`tab-${t}`);
+                if (el) el.classList.add('hidden');
+                if (tabEl) tabEl.className = 'px-4 py-3 border-b-2 border-transparent text-slate-600 whitespace-nowrap';
             });
-            document.getElementById(`section-${tab}`).classList.remove('hidden');
-            document.getElementById(`tab-${tab}`).className = 'px-4 py-3 border-b-2 border-emerald-600 text-emerald-700 whitespace-nowrap';
+            const activeEl = document.getElementById(`section-${tab}`);
+            const activeTabEl = document.getElementById(`tab-${tab}`);
+            if (activeEl) activeEl.classList.remove('hidden');
+            if (activeTabEl) activeTabEl.className = 'px-4 py-3 border-b-2 border-emerald-600 text-emerald-700 whitespace-nowrap';
+
+            if (tab === 'analytics') loadAnalytics();
             if (tab === 'orders') loadOrders();
             if (tab === 'payments') loadPendingPayments();
             if (tab === 'products') loadProducts();
+            if (tab === 'suppliers') loadSuppliers();
+            if (tab === 'pos') loadPurchaseOrders();
+            if (tab === 'batches') loadBatches();
+            if (tab === 'reports') loadReports();
+            if (tab === 'notifications') loadAdminNotifications();
+            if (tab === 'audit') loadAuditLogs();
             if (tab === 'settings') loadPaymentSettings();
         }
+
+        async function loadAnalytics() {
+            const container = document.getElementById('analytics-content');
+            const period = document.getElementById('analytics-period').value;
+            try {
+                const res = await fetch(`/api/admin/analytics/overview?period=${period}`, { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load analytics.');
+                const data = await res.json();
+                const o = data.orders;
+                const p = data.payments;
+                const pr = data.products;
+                const c = data.customers;
+
+                container.innerHTML = `
+                    <!-- ORDERS METRICS -->
+                    <div>
+                        <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider mb-3">📦 Order Performance</h3>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Total Orders</p>
+                                <p class="text-xl font-extrabold text-slate-900 mt-1">${o.total_orders || 0}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Today / Week / Month</p>
+                                <p class="text-xs font-bold text-slate-800 mt-1">${o.orders_today || 0} / ${o.orders_week || 0} / ${o.orders_month || 0}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Delivered Orders</p>
+                                <p class="text-xl font-extrabold text-emerald-600 mt-1">${o.delivered_orders || 0}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Pending / Cancelled</p>
+                                <p class="text-xl font-extrabold text-amber-600 mt-1">${o.pending_orders || 0} / <span class="text-red-600">${o.cancelled_orders || 0}</span></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- FINANCIAL METRICS -->
+                    <div>
+                        <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider mb-3">💰 Financial & Revenue Metrics</h3>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Gross Order Value</p>
+                                <p class="text-xl font-extrabold text-slate-900 mt-1">₹${parseFloat(o.gross_order_value || 0).toFixed(2)}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Delivered Order Value</p>
+                                <p class="text-xl font-extrabold text-emerald-600 mt-1">₹${parseFloat(o.delivered_order_value || 0).toFixed(2)}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Verified Payments</p>
+                                <p class="text-xl font-extrabold text-indigo-600 mt-1">₹${parseFloat(p.verified_payments || 0).toFixed(2)}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Pending Payments</p>
+                                <p class="text-xl font-extrabold text-amber-600 mt-1">₹${parseFloat(p.pending_payments || 0).toFixed(2)}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PRODUCTS & INVENTORY METRICS -->
+                    <div>
+                        <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider mb-3">💊 Products & Inventory Status</h3>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Active Products</p>
+                                <p class="text-xl font-extrabold text-slate-900 mt-1">${pr.total_active_products || 0}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Low Stock / Out</p>
+                                <p class="text-xl font-extrabold text-red-600 mt-1">${pr.low_stock_count || 0} / ${pr.out_of_stock_count || 0}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Expired Batches</p>
+                                <p class="text-xl font-extrabold text-red-600 mt-1">${pr.expired_batches || 0}</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                                <p class="text-xs text-slate-500">Est. Purchase Value</p>
+                                <p class="text-xl font-extrabold text-indigo-600 mt-1">₹${parseFloat(pr.estimated_purchase_value || 0).toFixed(2)}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BEST SELLERS -->
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+                        <h3 class="font-bold text-sm text-slate-900">🏆 Top Selling Medicines</h3>
+                        <div class="divide-y divide-slate-100">
+                            ${data.bestSellers.map(b => `
+                                <div class="py-2.5 flex justify-between items-center text-xs">
+                                    <span class="font-bold text-slate-800">${b.name}</span>
+                                    <span class="text-slate-600 font-semibold">${b.units_sold} units sold (₹${parseFloat(b.revenue).toFixed(2)})</span>
+                                </div>
+                            `).join('') || '<div class="text-xs text-slate-400 py-3">No sales recorded in this period.</div>'}
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                container.innerHTML = `<div class="p-8 text-center text-red-500 text-xs">Error loading analytics: ${err.message}</div>`;
+            }
+        }
+
+        async function loadAuditLogs() {
+            const listEl = document.getElementById('audit-logs-list');
+            const search = document.getElementById('audit-search').value;
+            try {
+                const res = await fetch(`/api/admin/audit-logs?search=${encodeURIComponent(search)}`, { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load audit logs.');
+                const logs = await res.json();
+                if (logs.length === 0) {
+                    listEl.innerHTML = '<div class="p-8 text-center text-xs text-slate-400">No audit logs found.</div>';
+                    return;
+                }
+                listEl.innerHTML = logs.map(l => `
+                    <div class="py-3.5 flex justify-between items-start gap-4 text-xs">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-slate-900">${l.action}</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${l.success ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}">${l.success ? 'SUCCESS' : 'FAILED'}</span>
+                                <span class="font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px]">${l.target_type} #${l.target_id || ''}</span>
+                            </div>
+                            <p class="text-slate-600 mt-1">${l.details || 'No additional details'}</p>
+                            <span class="text-[10px] text-slate-400 block mt-1">Admin: ${l.admin_name} • ${new Date(l.created_at).toLocaleString()}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                listEl.innerHTML = `<div class="p-8 text-center text-xs text-red-500">Error loading audit logs: ${err.message}</div>`;
+            }
+        }
+
+        function exportCsv(type) {
+            const period = document.getElementById('analytics-period')?.value || 'last30';
+            window.location.href = `/api/admin/reports/${type}.csv?period=${period}`;
+        }
+
+        async function loadAdminNotifications() {
+            const listEl = document.getElementById('admin-notifications-list');
+            try {
+                const res = await fetch('/api/admin/notifications/delivery-status', { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load delivery status');
+                const attempts = await res.json();
+                if (attempts.length === 0) {
+                    listEl.innerHTML = '<div class="p-6 text-center text-xs text-slate-400">No notification delivery attempts recorded yet.</div>';
+                    return;
+                }
+                listEl.innerHTML = attempts.map(a => `
+                    <div class="py-3.5 flex justify-between items-center gap-4">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-xs text-slate-900">${a.title}</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${a.status === 'Sent' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}">${a.status}</span>
+                            </div>
+                            <p class="text-xs text-slate-600 mt-0.5">Customer: ${a.customer_name || 'User #' + a.user_id} • Channel: ${a.channel}</p>
+                            ${a.error_message ? `<p class="text-[11px] text-red-500 mt-1">Error: ${a.error_message}</p>` : ''}
+                            <span class="text-[10px] text-slate-400 block mt-1">${new Date(a.last_attempt_at).toLocaleString()} (Attempts: ${a.attempt_count})</span>
+                        </div>
+                        ${a.status === 'Failed' ? `
+                            <button onclick="retryNotification(${a.id})" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shrink-0">Retry</button>
+                        ` : ''}
+                    </div>
+                `).join('');
+            } catch (err) {
+                listEl.innerHTML = `<div class="p-6 text-center text-xs text-red-500">Error loading notifications: ${err.message}</div>`;
+            }
+        }
+
+        async function retryNotification(id) {
+            try {
+                const res = await fetch(`/api/admin/notifications/${id}/retry`, {
+                    method: 'POST',
+                    headers: apiHeaders,
+                    credentials: 'include'
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                alert(data.message);
+                loadAdminNotifications();
+            } catch (err) {
+                alert('Error retrying notification: ' + err.message);
+            }
+        }
+
+
 
         async function loadPaymentSettings() {
             const container = document.getElementById('payment-settings-container');
@@ -629,6 +933,265 @@
                 else loadProducts();
             } catch (err) {
                 alert('Error adjusting stock');
+            }
+        }
+
+        async function loadSuppliers() {
+            const listEl = document.getElementById('suppliers-list');
+            try {
+                const res = await fetch('/api/admin/suppliers', { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load suppliers');
+                const suppliers = await res.json();
+                listEl.innerHTML = suppliers.map(s => `
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+                        <div class="flex justify-between items-start">
+                            <h4 class="font-bold text-slate-900 text-sm">${s.name}</h4>
+                            <span class="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-semibold">★ ${s.rating}</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Contact: <b>${s.contact_person || 'N/A'}</b> | Phone: ${s.phone}</p>
+                        <p class="text-xs text-slate-500">Email: ${s.email || 'N/A'} | GSTIN: ${s.gstin || 'N/A'}</p>
+                        <p class="text-xs text-slate-400 truncate">${s.address || 'No address'}</p>
+                    </div>
+                `).join('') || '<div class="col-span-2 text-center text-slate-400 text-xs py-8">No suppliers found.</div>';
+            } catch (err) {
+                listEl.innerHTML = '<div class="col-span-2 text-center text-red-500 text-xs">Failed to load suppliers.</div>';
+            }
+        }
+
+        async function openAddSupplierModal() {
+            const name = prompt('Enter supplier name:');
+            if (!name) return;
+            const phone = prompt('Enter supplier phone number:');
+            if (!phone) return;
+            const contactPerson = prompt('Enter contact person name (optional):') || '';
+            const email = prompt('Enter supplier email (optional):') || '';
+            const address = prompt('Enter supplier address (optional):') || '';
+            const gstin = prompt('Enter GSTIN (optional):') || '';
+
+            try {
+                const res = await fetch('/api/admin/suppliers', {
+                    method: 'POST',
+                    headers: apiHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({ name, phone, contactPerson, email, address, gstin })
+                });
+                if (!res.ok) throw new Error('Failed to create supplier');
+                loadSuppliers();
+                alert('Supplier added successfully.');
+            } catch (err) {
+                alert('Error adding supplier: ' + err.message);
+            }
+        }
+
+        async function loadPurchaseOrders() {
+            const listEl = document.getElementById('pos-list');
+            try {
+                const res = await fetch('/api/admin/purchase-orders', { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load purchase orders');
+                const pos = await res.json();
+                listEl.innerHTML = pos.map(po => `
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-slate-900 text-sm">PO #${po.id}</span>
+                                <span class="text-xs px-2 py-0.5 rounded font-semibold ${po.status === 'Received' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">${po.status}</span>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">Supplier: <b>${po.supplier_name || 'Unknown'}</b> | Total: ₹${po.total_amount}</p>
+                            <p class="text-xs text-slate-400">Expected: ${po.expected_date ? new Date(po.expected_date).toLocaleDateString() : 'N/A'}</p>
+                        </div>
+                        ${po.status !== 'Received' ? `
+                            <button onclick="receivePO(${po.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm">
+                                Receive into Stock
+                            </button>
+                        ` : '<span class="text-xs text-emerald-600 font-bold">✓ Received</span>'}
+                    </div>
+                `).join('') || '<div class="text-center text-slate-400 text-xs py-8">No purchase orders found.</div>';
+            } catch (err) {
+                listEl.innerHTML = '<div class="text-center text-red-500 text-xs">Failed to load purchase orders.</div>';
+            }
+        }
+
+        async function openCreatePOModal() {
+            const supplierId = prompt('Enter Supplier ID:');
+            if (!supplierId) return;
+            const productId = prompt('Enter Product ID to order:');
+            if (!productId) return;
+            const quantity = prompt('Enter quantity to order:', '50');
+            if (!quantity) return;
+            const unitPrice = prompt('Enter purchase unit price (₹):', '20');
+            if (!unitPrice) return;
+
+            try {
+                const res = await fetch('/api/admin/purchase-orders', {
+                    method: 'POST',
+                    headers: apiHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        supplierId: parseInt(supplierId),
+                        items: [{ productId: parseInt(productId), quantity: parseInt(quantity), unitPrice: parseFloat(unitPrice) }]
+                    })
+                });
+                if (!res.ok) throw new Error('Failed to create purchase order');
+                loadPurchaseOrders();
+                alert('Purchase Order created successfully.');
+            } catch (err) {
+                alert('Error creating PO: ' + err.message);
+            }
+        }
+
+        async function receivePO(poId) {
+            const batchNumber = prompt('Enter batch number for received items:', 'BATCH-' + Math.floor(1000 + Math.random() * 9000));
+            if (!batchNumber) return;
+            const expiryDate = prompt('Enter expiry date (YYYY-MM-DD):', new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+            if (!expiryDate) return;
+
+            try {
+                const res = await fetch(`/api/admin/purchase-orders/${poId}/receive`, {
+                    method: 'POST',
+                    headers: apiHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({ batchNumber, expiryDate })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to receive PO');
+                loadPurchaseOrders();
+                alert('Purchase Order received and stock batches created successfully.');
+            } catch (err) {
+                alert('Error receiving PO: ' + err.message);
+            }
+        }
+
+        async function loadBatches() {
+            const listEl = document.getElementById('batches-list');
+            try {
+                const res = await fetch('/api/admin/batches', { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load batches');
+                const batches = await res.json();
+                listEl.innerHTML = batches.map(b => `
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-slate-900 text-sm">Batch #${b.batch_number}</span>
+                                <span class="text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded font-mono">${b.product_name}</span>
+                                <span class="text-xs px-2 py-0.5 rounded font-semibold ${b.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${b.status}</span>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">Available: <b>${b.available_quantity}</b> / Initial: ${b.initial_quantity} | Expiry: <b>${new Date(b.expiry_date).toLocaleDateString()}</b></p>
+                            <p class="text-xs text-slate-400">Purchase Price: ₹${b.purchase_price} | Selling Price: ₹${b.selling_price} | Supplier: ${b.supplier_name || 'N/A'}</p>
+                        </div>
+                        ${b.status === 'Active' ? `
+                            <button onclick="writeOffBatch(${b.id}, ${b.available_quantity})" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm">
+                                Write Off / Return
+                            </button>
+                        ` : ''}
+                    </div>
+                `).join('') || '<div class="text-center text-slate-400 text-xs py-8">No batches found.</div>';
+            } catch (err) {
+                listEl.innerHTML = '<div class="text-center text-red-500 text-xs">Failed to load batches.</div>';
+            }
+        }
+
+        async function openAddBatchModal() {
+            const productId = prompt('Enter Product ID:');
+            if (!productId) return;
+            const batchNumber = prompt('Enter Batch Number:');
+            if (!batchNumber) return;
+            const expiryDate = prompt('Enter Expiry Date (YYYY-MM-DD):');
+            if (!expiryDate) return;
+            const purchasePrice = prompt('Enter Purchase Price (₹):');
+            if (!purchasePrice) return;
+            const sellingPrice = prompt('Enter Selling Price (₹):');
+            if (!sellingPrice) return;
+            const initialQuantity = prompt('Enter Initial Quantity:', '100');
+            if (!initialQuantity) return;
+
+            try {
+                const res = await fetch('/api/admin/batches', {
+                    method: 'POST',
+                    headers: apiHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        productId: parseInt(productId),
+                        batchNumber,
+                        expiryDate,
+                        purchasePrice: parseFloat(purchasePrice),
+                        sellingPrice: parseFloat(sellingPrice),
+                        initialQuantity: parseInt(initialQuantity)
+                    })
+                });
+                if (!res.ok) throw new Error('Failed to create batch');
+                loadBatches();
+                alert('Batch received and added to inventory successfully.');
+            } catch (err) {
+                alert('Error adding batch: ' + err.message);
+            }
+        }
+
+        async function writeOffBatch(batchId, maxQty) {
+            const qty = prompt(`Enter quantity to write off (max ${maxQty}):`, maxQty);
+            if (!qty) return;
+            const reason = prompt('Enter reason for write off (e.g. Expired, Damaged):', 'Expired');
+            if (!reason) return;
+
+            try {
+                const res = await fetch(`/api/admin/batches/${batchId}/write-off`, {
+                    method: 'POST',
+                    headers: apiHeaders,
+                    credentials: 'include',
+                    body: JSON.stringify({ quantity: parseInt(qty), reason })
+                });
+                if (!res.ok) throw new Error('Failed to write off batch');
+                loadBatches();
+                alert('Batch write-off recorded successfully.');
+            } catch (err) {
+                alert('Error writing off batch: ' + err.message);
+            }
+        }
+
+        async function loadReports() {
+            const container = document.getElementById('reports-container');
+            try {
+                const res = await fetch('/api/admin/inventory/reports', { headers: apiHeaders, credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load inventory reports');
+                const data = await res.json();
+                const v = data.valuation || {};
+                container.innerHTML = `
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                            <p class="text-xs text-slate-500">Total Purchase Value</p>
+                            <p class="text-lg font-extrabold text-slate-900 mt-1">₹${parseFloat(v.total_purchase_value || 0).toFixed(2)}</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                            <p class="text-xs text-slate-500">Total Sales Value</p>
+                            <p class="text-lg font-extrabold text-emerald-600 mt-1">₹${parseFloat(v.total_sales_value || 0).toFixed(2)}</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                            <p class="text-xs text-slate-500">Potential Profit</p>
+                            <p class="text-lg font-extrabold text-indigo-600 mt-1">₹${parseFloat(v.potential_profit || 0).toFixed(2)}</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                            <p class="text-xs text-slate-500">Active Batches Units</p>
+                            <p class="text-lg font-extrabold text-blue-600 mt-1">${v.total_units_in_batches || 0}</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                        <h3 class="font-bold text-sm text-slate-900">⚠️ Near-Expiry & Expired Batches (Next 90 Days)</h3>
+                        <div class="space-y-2">
+                            ${data.expiryAlerts.map(b => `
+                                <div class="flex justify-between items-center p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs">
+                                    <div>
+                                        <b class="text-amber-900">${b.product_name}</b> (Batch #${b.batch_number}) — Available: ${b.available_quantity} units
+                                    </div>
+                                    <div class="text-right">
+                                        <span class="font-bold text-red-600">Expires: ${new Date(b.expiry_date).toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                            `).join('') || '<div class="text-xs text-slate-400 py-4 text-center">No near-expiry batches. All clear!</div>'}
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                container.innerHTML = '<div class="p-8 text-center text-red-500 text-xs">Failed to load reports.</div>';
             }
         }
 

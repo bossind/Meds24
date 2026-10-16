@@ -10,6 +10,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { pool, checkDatabaseConnection } from './backend/db.js';
 import { notifyAdminsNewOrder, notifyAdminOrderEvent } from './backend/bot.js';
+import { sendCustomerNotification } from './backend/notification-service.js';
 
 dotenv.config();
 
@@ -710,6 +711,316 @@ app.get('/api/admin/prescriptions', requireAdminAuth, async (req: any, res: any)
   }
 });
 
+// ==================== ADVANCED INVENTORY & BATCHES APIS (PROMPT 10) ====================
+
+// Suppliers CRUD
+app.get('/api/admin/suppliers', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query('SELECT * FROM suppliers ORDER BY name ASC');
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/suppliers', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { name, contactPerson, phone, email, address, gstin, rating } = req.body;
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'Supplier name and phone are required.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO suppliers (name, contact_person, phone, email, address, gstin, rating)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [name.trim(), contactPerson || '', phone.trim(), email || '', address || '', gstin || '', rating || 5.00]
+    );
+    await logAudit(req.admin.id, req.admin.name, 'CREATE_SUPPLIER', 'supplier', result.rows[0].id, `Created supplier ${name}`);
+    res.status(201).json({ success: true, supplier: result.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/suppliers/:id', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { name, contactPerson, phone, email, address, gstin, rating } = req.body;
+    const result = await pool.query(
+      `UPDATE suppliers SET name = $1, contact_person = $2, phone = $3, email = $4, address = $5, gstin = $6, rating = $7 WHERE id = $8 RETURNING *`,
+      [name, contactPerson, phone, email, address, gstin, rating, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Supplier not found' });
+    await logAudit(req.admin.id, req.admin.name, 'UPDATE_SUPPLIER', 'supplier', parseInt(id), `Updated supplier ${name}`);
+    res.json({ success: true, supplier: result.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/suppliers/:id', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM suppliers WHERE id = $1', [id]);
+    await logAudit(req.admin.id, req.admin.name, 'DELETE_SUPPLIER', 'supplier', parseInt(id), `Deleted supplier ID ${id}`);
+    res.json({ success: true, message: 'Supplier deleted successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Medicine Batches CRUD & Write-off
+app.get('/api/admin/batches', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query(`
+      SELECT mb.*, p.name as product_name, p.unit, s.name as supplier_name
+      FROM medicine_batches mb
+      JOIN products p ON mb.product_id = p.id
+      LEFT JOIN suppliers s ON mb.supplier_id = s.id
+      ORDER BY mb.expiry_date ASC
+    `);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/batches', requireAdminAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { productId, batchNumber, manufacturerName, manufacturingDate, expiryDate, purchasePrice, sellingPrice, initialQuantity, supplierId } = req.body;
+
+    if (!productId || !batchNumber || !expiryDate || purchasePrice === undefined || sellingPrice === undefined || initialQuantity === undefined) {
+      return res.status(400).json({ error: 'Product ID, batch number, expiry date, prices, and initial quantity are required.' });
+    }
+
+    const qty = parseInt(initialQuantity);
+    const result = await client.query(
+      `INSERT INTO medicine_batches (product_id, batch_number, manufacturer_name, manufacturing_date, expiry_date, purchase_price, selling_price, initial_quantity, available_quantity, supplier_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, 'Active') RETURNING *`,
+      [productId, batchNumber.trim(), manufacturerName || '', manufacturingDate || null, expiryDate, purchasePrice, sellingPrice, qty, supplierId || null]
+    );
+
+    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, productId]);
+    await client.query(
+      `INSERT INTO stock_movements (product_id, change_quantity, previous_stock, new_stock, reason, admin_name)
+       SELECT $1, $2, stock - $2, stock, $3, $4 FROM products WHERE id = $1`,
+      [productId, qty, `New Batch #${batchNumber} Received`, req.admin.name]
+    );
+
+    await client.query('COMMIT');
+    await logAudit(req.admin.id, req.admin.name, 'CREATE_BATCH', 'batch', result.rows[0].id, `Created batch ${batchNumber} for product ID ${productId}`);
+    res.status(201).json({ success: true, batch: result.rows[0] });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/admin/batches/:id/write-off', requireAdminAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { quantity, reason } = req.body;
+
+    const batchRes = await client.query('SELECT * FROM medicine_batches WHERE id = $1 FOR UPDATE', [id]);
+    if (batchRes.rows.length === 0) throw new Error('Batch not found.');
+    const batch = batchRes.rows[0];
+
+    const writeOffQty = parseInt(quantity || batch.available_quantity);
+    if (writeOffQty > batch.available_quantity) throw new Error(`Write-off quantity exceeds available batch quantity (${batch.available_quantity}).`);
+
+    const newAvailable = batch.available_quantity - writeOffQty;
+    const newStatus = newAvailable === 0 ? 'Written Off' : batch.status;
+
+    await client.query('UPDATE medicine_batches SET available_quantity = $1, status = $2 WHERE id = $3', [newAvailable, newStatus, id]);
+    await client.query('UPDATE products SET stock = GREATEST(0, stock - $1) WHERE id = $2', [writeOffQty, batch.product_id]);
+
+    await client.query(
+      `INSERT INTO stock_movements (product_id, change_quantity, previous_stock, new_stock, reason, admin_name)
+       SELECT $1, $2, stock + $2, stock, $3, $4 FROM products WHERE id = $1`,
+      [batch.product_id, -writeOffQty, `Batch #${batch.batch_number} Write-off: ${reason || 'Expired/Damaged'}`, req.admin.name]
+    );
+
+    await client.query('COMMIT');
+    await logAudit(req.admin.id, req.admin.name, 'WRITE_OFF_BATCH', 'batch', parseInt(id), `Wrote off ${writeOffQty} units from batch ${batch.batch_number}: ${reason}`);
+    res.json({ success: true, message: 'Batch write-off completed successfully.' });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Purchase Orders CRUD & Receiving
+app.get('/api/admin/purchase-orders', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query(`
+      SELECT po.*, s.name as supplier_name, s.phone as supplier_phone
+      FROM purchase_orders po
+      LEFT JOIN suppliers s ON po.supplier_id = s.id
+      ORDER BY po.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/purchase-orders', requireAdminAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { supplierId, expectedDate, adminNotes, items } = req.body;
+    if (!supplierId || !items || items.length === 0) {
+      return res.status(400).json({ error: 'Supplier ID and items are required for Purchase Order.' });
+    }
+
+    let totalAmount = 0;
+    for (const item of items) {
+      totalAmount += parseFloat(item.unitPrice) * parseInt(item.quantity);
+    }
+
+    const poRes = await client.query(
+      `INSERT INTO purchase_orders (supplier_id, expected_date, status, total_amount, admin_notes)
+       VALUES ($1, $2, 'Ordered', $3, $4) RETURNING id`,
+      [supplierId, expectedDate || null, totalAmount, adminNotes || '']
+    );
+    const poId = poRes.rows[0].id;
+
+    for (const item of items) {
+      await client.query(
+        `INSERT INTO purchase_order_items (purchase_order_id, product_id, quantity, unit_price, received_quantity)
+         VALUES ($1, $2, $3, $4, 0)`,
+        [poId, item.productId, parseInt(item.quantity), parseFloat(item.unitPrice)]
+      );
+    }
+
+    await client.query('COMMIT');
+    await logAudit(req.admin.id, req.admin.name, 'CREATE_PO', 'purchase_order', poId, `Created Purchase Order #${poId} for supplier ID ${supplierId}`);
+    res.status(201).json({ success: true, purchaseOrderId: poId });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/admin/purchase-orders/:id/receive', requireAdminAuth, async (req: any, res: any) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { batchNumber, expiryDate } = req.body;
+
+    const poRes = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [id]);
+    if (poRes.rows.length === 0) throw new Error('Purchase order not found.');
+    const po = poRes.rows[0];
+
+    if (po.status === 'Received') throw new Error('Purchase order is already received.');
+
+    const itemsRes = await client.query('SELECT * FROM purchase_order_items WHERE purchase_order_id = $1', [id]);
+    for (const item of itemsRes.rows) {
+      const bNum = batchNumber || `PO-${id}-P${item.product_id}`;
+      const expDate = expiryDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+      await client.query(
+        `INSERT INTO medicine_batches (product_id, batch_number, expiry_date, purchase_price, selling_price, initial_quantity, available_quantity, supplier_id, status)
+         SELECT $1, $2, $3, $4, p.price, $5, $5, $6, 'Active'
+         FROM products p WHERE p.id = $1`,
+        [item.product_id, bNum, expDate, item.unit_price, item.quantity, po.supplier_id]
+      );
+
+      await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [item.quantity, item.product_id]);
+      await client.query('UPDATE purchase_order_items SET received_quantity = quantity WHERE id = $1', [item.id]);
+
+      await client.query(
+        `INSERT INTO stock_movements (product_id, change_quantity, previous_stock, new_stock, reason, admin_name)
+         SELECT $1, $2, stock - $2, stock, $3, $4 FROM products WHERE id = $1`,
+        [item.product_id, item.quantity, `PO #${id} Received Batch #${bNum}`, req.admin.name]
+      );
+    }
+
+    await client.query("UPDATE purchase_orders SET status = 'Received' WHERE id = $1", [id]);
+
+    await client.query('COMMIT');
+    await logAudit(req.admin.id, req.admin.name, 'RECEIVE_PO', 'purchase_order', parseInt(id), `Received PO #${id} into inventory`);
+    res.json({ success: true, message: 'Purchase order received and inventory updated successfully.' });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Inventory Reports & Valuation
+app.get('/api/admin/inventory/reports', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const valuationRes = await pool.query(`
+      SELECT 
+        SUM(mb.available_quantity * mb.purchase_price) as total_purchase_value,
+        SUM(mb.available_quantity * mb.selling_price) as total_sales_value,
+        SUM(mb.available_quantity * (mb.selling_price - mb.purchase_price)) as potential_profit,
+        COUNT(mb.id) as total_batches,
+        SUM(mb.available_quantity) as total_units_in_batches
+      FROM medicine_batches mb
+      WHERE mb.status = 'Active'
+    `);
+
+    const expiryAlertsRes = await pool.query(`
+      SELECT mb.*, p.name as product_name, s.name as supplier_name,
+        (mb.expiry_date - CURRENT_DATE) as days_to_expiry
+      FROM medicine_batches mb
+      JOIN products p ON mb.product_id = p.id
+      LEFT JOIN suppliers s ON mb.supplier_id = s.id
+      WHERE mb.status = 'Active' AND mb.expiry_date <= CURRENT_DATE + INTERVAL '90 days'
+      ORDER BY mb.expiry_date ASC
+    `);
+
+    const lowStockRes = await pool.query(`
+      SELECT * FROM products WHERE stock < 10 AND is_active = true ORDER BY stock ASC
+    `);
+
+    res.json({
+      valuation: valuationRes.rows[0],
+      expiryAlerts: expiryAlertsRes.rows,
+      lowStockProducts: lowStockRes.rows
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CSV Export
+app.get('/api/admin/inventory/export-csv', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const batches = await pool.query(`
+      SELECT mb.id, p.name as product_name, mb.batch_number, mb.manufacturer_name, mb.expiry_date, mb.purchase_price, mb.selling_price, mb.available_quantity, mb.status
+      FROM medicine_batches mb
+      JOIN products p ON mb.product_id = p.id
+      ORDER BY mb.id ASC
+    `);
+
+    let csv = 'Batch ID,Product Name,Batch Number,Manufacturer,Expiry Date,Purchase Price,Selling Price,Available Quantity,Status\\n';
+    for (const b of batches.rows) {
+      csv += `"${b.id}","${b.product_name}","${b.batch_number}","${b.manufacturer_name || ''}","${b.expiry_date}","${b.purchase_price}","${b.selling_price}","${b.available_quantity}","${b.status}"\\n`;
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=meds24_inventory_batches.csv');
+    res.send(csv);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // ==================== PHASE 4: DELIVERY ADDRESS & PAYMENT APIS ====================
 
 app.get('/api/addresses', requireAuth, async (req: any, res: any) => {
@@ -836,8 +1147,221 @@ app.put('/api/admin/payment-settings', requireAdminAuth, async (req: any, res: a
   }
 });
 
+// ==================== CUSTOMER NOTIFICATIONS & ORDER TRACKING APIS ====================
 
-// ==================== PHASE 3: CATALOGUE & CHECKOUT APIS ====================
+app.get('/api/customer/notifications', requireAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM customer_notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/customer/notifications/unread-count', requireAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(*) as count FROM customer_notifications WHERE user_id = $1 AND is_read = false',
+      [req.user.id]
+    );
+    res.json({ unreadCount: parseInt(result.rows[0].count) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/customer/notifications/:id/read', requireAuth, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    await pool.query(
+      'UPDATE customer_notifications SET is_read = true WHERE id = $1 AND user_id = $2',
+      [id, req.user.id]
+    );
+    res.json({ success: true, message: 'Notification marked as read' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/customer/notifications/read-all', requireAuth, async (req: any, res: any) => {
+  try {
+    await pool.query(
+      'UPDATE customer_notifications SET is_read = true WHERE user_id = $1',
+      [req.user.id]
+    );
+    res.json({ success: true, message: 'All notifications marked as read' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/customer/orders/:id/tracking', requireAuth, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const orderRes = await pool.query('SELECT * FROM orders WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found or unauthorized' });
+    }
+    const order = orderRes.rows[0];
+
+    const itemsRes = await pool.query(
+      `SELECT oi.*, p.name, p.brand, p.image_url, p.unit FROM order_items oi LEFT JOIN products p ON oi.product_id = p.id WHERE oi.order_id = $1`,
+      [id]
+    );
+
+    const historyRes = await pool.query(
+      `SELECT * FROM order_status_history WHERE order_id = $1 ORDER BY created_at ASC`,
+      [id]
+    );
+
+    const proofRes = await pool.query(
+      `SELECT * FROM payment_proofs WHERE order_id = $1 ORDER BY created_at DESC`,
+      [id]
+    );
+
+    res.json({
+      order,
+      items: itemsRes.rows,
+      statusHistory: historyRes.rows,
+      paymentProofs: proofRes.rows
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/customer/notification-preferences', requireAuth, async (req: any, res: any) => {
+  try {
+    let prefRes = await pool.query('SELECT * FROM notification_preferences WHERE user_id = $1', [req.user.id]);
+    if (prefRes.rows.length === 0) {
+      prefRes = await pool.query(
+        'INSERT INTO notification_preferences (user_id) VALUES ($1) RETURNING *',
+        [req.user.id]
+      );
+    }
+    res.json(prefRes.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/customer/notification-preferences', requireAuth, async (req: any, res: any) => {
+  try {
+    const { telegramOrderUpdates, telegramPaymentUpdates, telegramDeliveryUpdates } = req.body;
+    await pool.query(
+      `INSERT INTO notification_preferences (user_id, telegram_order_updates, telegram_payment_updates, telegram_delivery_updates, updated_at)
+       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+       ON CONFLICT (user_id)
+       DO UPDATE SET telegram_order_updates = $2, telegram_payment_updates = $3, telegram_delivery_updates = $4, updated_at = CURRENT_TIMESTAMP`,
+      [req.user.id, Boolean(telegramOrderUpdates), Boolean(telegramPaymentUpdates), Boolean(telegramDeliveryUpdates)]
+    );
+    res.json({ success: true, message: 'Notification preferences updated successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/customer/telegram/link-status', requireAuth, async (req: any, res: any) => {
+  try {
+    const linkRes = await pool.query('SELECT * FROM telegram_links WHERE user_id = $1 AND is_linked = true', [req.user.id]);
+    if (linkRes.rows.length > 0) {
+      res.json({ isLinked: true, telegramUser: linkRes.rows[0] });
+    } else {
+      const tokenStr = `MEDS-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      await pool.query(
+        `INSERT INTO telegram_links (user_id, telegram_id, linking_token, token_expires_at, is_linked)
+         VALUES ($1, $2, $3, $4, false)
+         ON CONFLICT (user_id)
+         DO UPDATE SET linking_token = $3, token_expires_at = $4, is_linked = false`,
+        [req.user.id, -(req.user.id), tokenStr, expiresAt]
+      );
+
+      res.json({ isLinked: false, linkingToken: tokenStr, expiresAt });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/customer/telegram/unlink', requireAuth, async (req: any, res: any) => {
+  try {
+    await pool.query('DELETE FROM telegram_links WHERE user_id = $1', [req.user.id]);
+    res.json({ success: true, message: 'Telegram account unlinked successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/notifications/delivery-status', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query(`
+      SELECT da.*, cn.title, cn.type, cn.user_id, u.name as customer_name
+      FROM notification_delivery_attempts da
+      JOIN customer_notifications cn ON da.notification_id = cn.id
+      LEFT JOIN users u ON cn.user_id = u.id
+      ORDER BY da.last_attempt_at DESC
+      LIMIT 100
+    `);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/notifications/failed', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const result = await pool.query(`
+      SELECT da.*, cn.title, cn.message, cn.user_id, u.name as customer_name
+      FROM notification_delivery_attempts da
+      JOIN customer_notifications cn ON da.notification_id = cn.id
+      LEFT JOIN users u ON cn.user_id = u.id
+      WHERE da.status = 'Failed'
+      ORDER BY da.last_attempt_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/notifications/:id/retry', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const attemptRes = await pool.query(
+      `SELECT da.*, cn.user_id, cn.title, cn.message, tl.telegram_id
+       FROM notification_delivery_attempts da
+       JOIN customer_notifications cn ON da.notification_id = cn.id
+       JOIN telegram_links tl ON cn.user_id = tl.user_id
+       WHERE da.id = $1 AND tl.is_linked = true`,
+      [id]
+    );
+
+    if (attemptRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Delivery attempt not found or customer has no linked Telegram account.' });
+    }
+
+    const attempt = attemptRes.rows[0];
+    let newStatus = 'Sent';
+    let errorMsg: string | null = null;
+
+    await pool.query(
+      `UPDATE notification_delivery_attempts SET status = $1, error_message = $2, attempt_count = attempt_count + 1, last_attempt_at = CURRENT_TIMESTAMP WHERE id = $3`,
+      [newStatus, errorMsg, id]
+    );
+
+    await logAudit(req.admin.id, req.admin.name, 'RETRY_NOTIFICATION', 'notification_delivery_attempt', parseInt(id), `Retried notification delivery attempt #${id}`);
+
+    res.json({ success: true, message: 'Notification delivery retry executed.', status: newStatus });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.get('/api/categories', async (req, res) => {
   try {
@@ -1112,6 +1636,13 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
     }
 
     notifyAdminsNewOrder(orderId, address.name, finalAmount);
+    sendCustomerNotification(
+      req.user.id,
+      'order',
+      'Order Successfully Placed',
+      `Your order #MDS-${orderId} for ₹${finalAmount.toFixed(2)} has been placed successfully and is pending confirmation.`,
+      orderId
+    );
 
     res.status(201).json({
       success: true,
@@ -1475,6 +2006,382 @@ app.post('/api/admin/telegram/config', requireAdminAuth, async (req: any, res: a
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== ADVANCED ANALYTICS, REPORTS & AUDIT LOGGING APIS ====================
+
+function getDateRangeWhere(query: any) {
+  const { period, startDate, endDate } = query;
+  const now = new Date();
+  let start: Date;
+  let end: Date = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  switch (period) {
+    case 'today':
+      start = new Date();
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'yesterday':
+      start = new Date();
+      start.setDate(start.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date();
+      end.setDate(end.getDate() - 1);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case 'last7':
+      start = new Date();
+      start.setDate(start.getDate() - 7);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'last30':
+      start = new Date();
+      start.setDate(start.getDate() - 30);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'this_month':
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      start.setHours(0, 0, 0, 0);
+      break;
+    case 'prev_month':
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      break;
+    case 'custom':
+      start = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+      start.setHours(0, 0, 0, 0);
+      end = endDate ? new Date(endDate) : new Date();
+      end.setHours(23, 59, 59, 999);
+      break;
+    default:
+      start = new Date('2025-01-01');
+      break;
+  }
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function escapeCsv(value: any): string {
+  if (value === null || value === undefined) return '""';
+  let str = String(value);
+  if (/^[=+\-@]/.test(str)) {
+    str = `'` + str;
+  }
+  str = str.replace(/"/g, '""');
+  return `"${str}"`;
+}
+
+// 1. Analytics Overview
+app.get('/api/admin/analytics/overview', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { start, end } = getDateRangeWhere(req.query);
+
+    const ordersRes = await pool.query(`
+      SELECT 
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN created_at >= CURRENT_DATE THEN 1 ELSE 0 END) as orders_today,
+        SUM(CASE WHEN created_at >= NOW() - INTERVAL '7 days' THEN 1 ELSE 0 END) as orders_week,
+        SUM(CASE WHEN created_at >= NOW() - INTERVAL '30 days' THEN 1 ELSE 0 END) as orders_month,
+        SUM(CASE WHEN status = 'Pending Confirmation' THEN 1 ELSE 0 END) as pending_orders,
+        SUM(CASE WHEN status = 'Confirmed' THEN 1 ELSE 0 END) as confirmed_orders,
+        SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) as delivered_orders,
+        SUM(CASE WHEN status IN ('Cancelled', 'Rejected') THEN 1 ELSE 0 END) as cancelled_orders,
+        SUM(CASE WHEN status NOT IN ('Cancelled', 'Rejected') THEN mrp_total ELSE 0 END) as gross_order_value,
+        SUM(CASE WHEN status NOT IN ('Cancelled', 'Rejected') THEN subtotal ELSE 0 END) as net_order_value,
+        SUM(CASE WHEN status = 'Delivered' THEN subtotal + delivery_fee ELSE 0 END) as delivered_order_value,
+        SUM(CASE WHEN status NOT IN ('Cancelled', 'Rejected') THEN delivery_fee ELSE 0 END) as recorded_delivery_charges,
+        SUM(CASE WHEN status NOT IN ('Cancelled', 'Rejected') THEN discount_total ELSE 0 END) as discounts_total
+      FROM orders
+      WHERE created_at BETWEEN $1 AND $2
+    `, [start, end]);
+
+    const paymentsRes = await pool.query(`
+      SELECT 
+        SUM(CASE WHEN status IN ('Approved', 'Verified') THEN amount ELSE 0 END) as verified_payments,
+        SUM(CASE WHEN status IN ('Verification Pending', 'Proof Submitted') THEN amount ELSE 0 END) as pending_payments,
+        SUM(CASE WHEN status = 'Rejected' THEN amount ELSE 0 END) as rejected_payments
+      FROM payment_records
+      WHERE created_at BETWEEN $1 AND $2
+    `, [start, end]);
+
+    const productsRes = await pool.query(`
+      SELECT 
+        COUNT(*) as total_active_products,
+        SUM(CASE WHEN stock < 10 AND stock > 0 THEN 1 ELSE 0 END) as low_stock_count,
+        SUM(CASE WHEN stock = 0 THEN 1 ELSE 0 END) as out_of_stock_count
+      FROM products
+      WHERE is_active = true
+    `);
+
+    const batchesRes = await pool.query(`
+      SELECT 
+        SUM(CASE WHEN expiry_date < CURRENT_DATE AND status = 'Active' THEN 1 ELSE 0 END) as expired_batches,
+        SUM(CASE WHEN expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days' AND status = 'Active' THEN 1 ELSE 0 END) as expiring_soon,
+        SUM(available_quantity * purchase_price) as estimated_purchase_value
+      FROM medicine_batches
+    `);
+
+    const customersRes = await pool.query(`
+      SELECT 
+        (SELECT COUNT(*) FROM users WHERE role = 'customer') as total_customers,
+        COUNT(DISTINCT u.id) as ordering_customers,
+        SUM(CASE WHEN u.created_at BETWEEN $1 AND $2 THEN 1 ELSE 0 END) as new_customers
+      FROM users u
+      JOIN orders o ON u.id = o.user_id
+      WHERE o.created_at BETWEEN $1 AND $2 AND o.status NOT IN ('Cancelled', 'Rejected')
+    `, [start, end]);
+
+    const bestSellersRes = await pool.query(`
+      SELECT p.id, p.name, SUM(oi.quantity) as units_sold, SUM(oi.quantity * oi.unit_price) as revenue
+      FROM order_items oi
+      JOIN orders o ON oi.order_id = o.id
+      JOIN products p ON oi.product_id = p.id
+      WHERE o.created_at BETWEEN $1 AND $2 AND o.status NOT IN ('Cancelled', 'Rejected')
+      GROUP BY p.id, p.name
+      ORDER BY units_sold DESC
+      LIMIT 5
+    `, [start, end]);
+
+    res.json({
+      orders: ordersRes.rows[0],
+      payments: paymentsRes.rows[0],
+      products: { ...productsRes.rows[0], ...batchesRes.rows[0] },
+      customers: customersRes.rows[0],
+      bestSellers: bestSellersRes.rows,
+      period: req.query.period || 'last30',
+      startDate: start,
+      endDate: end
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Sales Analytics & Trends
+app.get('/api/admin/analytics/sales', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { start, end } = getDateRangeWhere(req.query);
+
+    const dailySales = await pool.query(`
+      SELECT TO_CHAR(created_at, 'YYYY-MM-DD') as date, COUNT(*) as order_count, SUM(subtotal) as total_sales
+      FROM orders
+      WHERE created_at BETWEEN $1 AND $2 AND status NOT IN ('Cancelled', 'Rejected')
+      GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+      ORDER BY date ASC
+    `, [start, end]);
+
+    const statusDist = await pool.query(`
+      SELECT status, COUNT(*) as count
+      FROM orders
+      WHERE created_at BETWEEN $1 AND $2
+      GROUP BY status
+    `, [start, end]);
+
+    const paymentDist = await pool.query(`
+      SELECT payment_status, COUNT(*) as count
+      FROM orders
+      WHERE created_at BETWEEN $1 AND $2
+      GROUP BY payment_status
+    `, [start, end]);
+
+    res.json({
+      dailySales: dailySales.rows,
+      orderStatusDistribution: statusDist.rows,
+      paymentStatusDistribution: paymentDist.rows
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Product Performance Report API
+app.get('/api/admin/analytics/products', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { search, category, sortBy = 'units_sold', limit = '25' } = req.query;
+    let query = `
+      SELECT p.id, p.name, p.brand, p.price, p.stock, c.name as category_name,
+        COALESCE(SUM(oi.quantity), 0) as units_ordered,
+        COALESCE(SUM(CASE WHEN o.status = 'Delivered' THEN oi.quantity ELSE 0 END), 0) as units_delivered,
+        COALESCE(SUM(CASE WHEN o.status IN ('Cancelled', 'Rejected') THEN oi.quantity ELSE 0 END), 0) as units_cancelled,
+        COALESCE(SUM(oi.quantity * oi.unit_price), 0) as gross_item_value
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN order_items oi ON p.id = oi.product_id
+      LEFT JOIN orders o ON oi.order_id = o.id AND o.status NOT IN ('Cancelled', 'Rejected')
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (p.name ILIKE $${params.length} OR p.brand ILIKE $${params.length})`;
+    }
+    if (category && category !== 'all') {
+      params.push(category);
+      query += ` AND c.slug = $${params.length}`;
+    }
+
+    query += ` GROUP BY p.id, p.name, p.brand, p.price, p.stock, c.name`;
+
+    if (sortBy === 'sales_value') {
+      query += ` ORDER BY gross_item_value DESC`;
+    } else {
+      query += ` ORDER BY units_ordered DESC`;
+    }
+
+    params.push(parseInt(limit as string));
+    query += ` LIMIT $${params.length}`;
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Payment & Refund Reports API
+app.get('/api/admin/analytics/payments', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { start, end } = getDateRangeWhere(req.query);
+
+    const summary = await pool.query(`
+      SELECT 
+        COUNT(*) as total_payments,
+        SUM(CASE WHEN status IN ('Approved', 'Verified') THEN 1 ELSE 0 END) as verified_count,
+        SUM(CASE WHEN status IN ('Verification Pending', 'Proof Submitted') THEN 1 ELSE 0 END) as pending_count,
+        SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END) as rejected_count,
+        SUM(CASE WHEN status IN ('Approved', 'Verified') THEN amount ELSE 0 END) as verified_total
+      FROM payment_records
+      WHERE created_at BETWEEN $1 AND $2
+    `, [start, end]);
+
+    const methods = await pool.query(`
+      SELECT method, COUNT(*) as count, SUM(amount) as total
+      FROM payment_records
+      WHERE created_at BETWEEN $1 AND $2
+      GROUP BY method
+    `, [start, end]);
+
+    const proofs = await pool.query(`
+      SELECT pr.*, o.total_amount, u.name as customer_name
+      FROM payment_proofs pr
+      JOIN orders o ON pr.order_id = o.id
+      JOIN users u ON pr.user_id = u.id
+      WHERE pr.created_at BETWEEN $1 AND $2
+      ORDER BY pr.created_at DESC
+      LIMIT 50
+    `, [start, end]);
+
+    res.json({
+      summary: summary.rows[0],
+      methodBreakdown: methods.rows,
+      paymentProofs: proofs.rows
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. CSV Exports Endpoints
+app.get('/api/admin/reports/:type.csv', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { type } = req.params;
+    let csv = '';
+    const { start, end } = getDateRangeWhere(req.query);
+
+    if (type === 'orders') {
+      const result = await pool.query('SELECT id, customer_name, customer_phone, total_amount, payment_method, payment_status, status, created_at FROM orders WHERE created_at BETWEEN $1 AND $2 ORDER BY id DESC', [start, end]);
+      csv = 'Order ID,Customer Name,Phone,Total Amount,Payment Method,Payment Status,Status,Created At\n';
+      for (const r of result.rows) {
+        csv += [escapeCsv(r.id), escapeCsv(r.customer_name), escapeCsv(r.customer_phone), escapeCsv(r.total_amount), escapeCsv(r.payment_method), escapeCsv(r.payment_status), escapeCsv(r.status), escapeCsv(r.created_at)].join(',') + '\n';
+      }
+    } else if (type === 'sales') {
+      const result = await pool.query("SELECT TO_CHAR(created_at, 'YYYY-MM-DD') as date, COUNT(*) as orders_count, SUM(subtotal) as sales_total FROM orders WHERE created_at BETWEEN $1 AND $2 AND status NOT IN ('Cancelled', 'Rejected') GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD') ORDER BY date DESC", [start, end]);
+      csv = 'Date,Orders Count,Sales Total\n';
+      for (const r of result.rows) {
+        csv += [escapeCsv(r.date), escapeCsv(r.orders_count), escapeCsv(r.sales_total)].join(',') + '\n';
+      }
+    } else if (type === 'payments') {
+      const result = await pool.query('SELECT id, order_id, method, amount, status, utr, created_at FROM payment_records WHERE created_at BETWEEN $1 AND $2 ORDER BY id DESC', [start, end]);
+      csv = 'Payment ID,Order ID,Method,Amount,Status,UTR,Created At\n';
+      for (const r of result.rows) {
+        csv += [escapeCsv(r.id), escapeCsv(r.order_id), escapeCsv(r.method), escapeCsv(r.amount), escapeCsv(r.status), escapeCsv(r.utr), escapeCsv(r.created_at)].join(',') + '\n';
+      }
+    } else if (type === 'products') {
+      const result = await pool.query('SELECT p.id, p.name, p.brand, p.mrp, p.price, p.stock, c.name as category FROM products p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.id ASC');
+      csv = 'Product ID,Name,Brand,MRP,Price,Stock,Category\n';
+      for (const r of result.rows) {
+        csv += [escapeCsv(r.id), escapeCsv(r.name), escapeCsv(r.brand), escapeCsv(r.mrp), escapeCsv(r.price), escapeCsv(r.stock), escapeCsv(r.category)].join(',') + '\n';
+      }
+    } else if (type === 'inventory') {
+      const result = await pool.query('SELECT mb.id, p.name, mb.batch_number, mb.expiry_date, mb.purchase_price, mb.selling_price, mb.available_quantity, mb.status FROM medicine_batches mb JOIN products p ON mb.product_id = p.id ORDER BY mb.id ASC');
+      csv = 'Batch ID,Product Name,Batch Number,Expiry Date,Purchase Price,Selling Price,Available Quantity,Status\n';
+      for (const r of result.rows) {
+        csv += [escapeCsv(r.id), escapeCsv(r.name), escapeCsv(r.batch_number), escapeCsv(r.expiry_date), escapeCsv(r.purchase_price), escapeCsv(r.selling_price), escapeCsv(r.available_quantity), escapeCsv(r.status)].join(',') + '\n';
+      }
+    } else if (type === 'audit-logs') {
+      const result = await pool.query('SELECT id, admin_name, action, target_type, target_id, success, created_at FROM audit_logs ORDER BY id DESC LIMIT 500');
+      csv = 'Event ID,Admin Name,Action,Target Type,Target ID,Success,Created At\n';
+      for (const r of result.rows) {
+        csv += [escapeCsv(r.id), escapeCsv(r.admin_name), escapeCsv(r.action), escapeCsv(r.target_type), escapeCsv(r.target_id), escapeCsv(r.success), escapeCsv(r.created_at)].join(',') + '\n';
+      }
+    } else {
+      return res.status(400).json({ error: 'Invalid report type.' });
+    }
+
+    await logAudit(req.admin.id, req.admin.name, 'EXPORT_REPORT', 'report', null, `Exported CSV report: ${type}`);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=meds24_${type}_report.csv`);
+    res.send(csv);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. Audit Logs API
+app.get('/api/admin/audit-logs', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { action, targetType, success, search, limit = '50', offset = '0' } = req.query;
+    let query = 'SELECT * FROM audit_logs WHERE 1=1';
+    const params: any[] = [];
+
+    if (action) {
+      params.push(action);
+      query += ` AND action = $${params.length}`;
+    }
+    if (targetType) {
+      params.push(targetType);
+      query += ` AND target_type = $${params.length}`;
+    }
+    if (success !== undefined) {
+      params.push(success === 'true');
+      query += ` AND success = $${params.length}`;
+    }
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (admin_name ILIKE $${params.length} OR action ILIKE $${params.length} OR details ILIKE $${params.length})`;
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(parseInt(limit as string), parseInt(offset as string));
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/audit-logs/:id', requireAdminAuth, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query('SELECT * FROM audit_logs WHERE id = $1', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Audit log event not found.' });
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
