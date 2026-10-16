@@ -230,10 +230,10 @@ export default function App() {
       setSearchQuery('');
       setSelectedCategory('all');
     } else if (tab === 'search') {
-      const el = document.getElementById('products');
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
-      const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-      if (searchInput) searchInput.focus();
+      const searchInput = (document.getElementById('mobile-search-input') || document.getElementById('header-search-input')) as HTMLInputElement | null;
+      if (searchInput) {
+        searchInput.focus({ preventScroll: true });
+      }
     } else if (tab === 'orders') {
       if (currentUser) {
         setIsTrackingOpen(true);
@@ -265,6 +265,8 @@ export default function App() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onSelectOrder={(id) => setTrackedOrderId(id)}
+        onSelectProduct={(id) => setSelectedProductId(id)}
+        products={products}
       />
 
       {/* Main Content */}
