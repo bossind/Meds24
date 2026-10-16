@@ -1099,8 +1099,36 @@ app.get('/api/health', async (req, res) => {
 app.post('/api/admin/auth', authLimiter, async (req: any, res: any) => {
   try {
     const { passcode } = req.body;
-    const adminPass = process.env.ADMIN_PASSCODE || 'admin123';
-    if (!passcode || passcode !== adminPass) {
+    if (!passcode || typeof passcode !== 'string') {
+      return res.status(401).json({ error: 'Please enter a valid administrator passcode.' });
+    }
+
+    const adminPass = process.env.ADMIN_PASSCODE ? process.env.ADMIN_PASSCODE.trim() : '';
+    const rawPassHash = process.env.ADMIN_PASSCODE_HASH;
+    const adminPassHash = rawPassHash ? rawPassHash.trim().replace(/^["']|["']$/g, '') : '';
+
+    let isAuthenticated = false;
+
+    if (adminPassHash !== '') {
+      try {
+        isAuthenticated = await bcrypt.compare(passcode.trim(), adminPassHash);
+      } catch (bcryptErr) {
+        console.error('Bcrypt validation error with ADMIN_PASSCODE_HASH:', bcryptErr);
+        isAuthenticated = false;
+      }
+    } else if (adminPass !== '') {
+      isAuthenticated = (passcode.trim() === adminPass);
+    } else {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({
+          error: 'Server configuration error: ADMIN_PASSCODE or ADMIN_PASSCODE_HASH must be configured in production.'
+        });
+      }
+      // Fallback default for development testing only
+      isAuthenticated = (passcode.trim() === 'admin123');
+    }
+
+    if (!isAuthenticated) {
       return res.status(401).json({ error: 'Invalid administrator passcode.' });
     }
 
