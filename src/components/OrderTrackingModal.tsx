@@ -55,18 +55,24 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
     if (!activeOrderId) return;
     try {
       setCancelling(true);
-      const res = await fetch(`/api/customer/orders/${activeOrderId}/cancel`, {
+      const res = await fetch(`/api/orders/${activeOrderId}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: cancelReason || 'Cancelled by customer' }),
         credentials: 'include'
       });
+
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Server returned an unexpected response format. Please try again.');
+      }
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to cancel order');
       setShowCancelPrompt(false);
       fetchTracking(activeOrderId);
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || 'Failed to cancel order.');
     } finally {
       setCancelling(false);
     }

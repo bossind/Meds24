@@ -1762,7 +1762,7 @@ app.get('/api/orders/:id', requireAuth, async (req: any, res: any) => {
   }
 });
 
-app.post('/api/orders/:id/cancel', requireAuth, async (req: any, res: any) => {
+const handleOrderCancel = async (req: any, res: any) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1805,7 +1805,10 @@ app.post('/api/orders/:id/cancel', requireAuth, async (req: any, res: any) => {
   } finally {
     client.release();
   }
-});
+};
+
+app.post('/api/orders/:id/cancel', requireAuth, handleOrderCancel);
+app.post('/api/customer/orders/:id/cancel', requireAuth, handleOrderCancel);
 
 app.get('/api/health', async (req, res) => {
   try {
