@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { X, Package, Clock, CheckCircle2, Truck, AlertCircle, Phone, FileText, Ban, Check, ShieldCheck, MapPin, Search } from 'lucide-react';
+import { X, Package, Clock, CheckCircle2, Truck, AlertCircle, Phone, FileText, Ban, Check, ShieldCheck, MapPin, Search, ArrowLeft } from 'lucide-react';
 
 interface OrderTrackingModalProps {
   isOpen: boolean;
   orderId: number | null;
   onClose: () => void;
+  onClearSelectedOrder?: () => void;
 }
 
-export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, orderId, onClose }) => {
+export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, orderId, onClose, onClearSelectedOrder }) => {
   const [activeOrderId, setActiveOrderId] = useState<number | null>(orderId);
   const [inputOrderId, setInputOrderId] = useState('');
   const [trackingData, setTrackingData] = useState<any>(null);
@@ -19,13 +20,117 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
   const [fetchingOrders, setFetchingOrders] = useState(false);
 
-  useEffect(() => {
-    setActiveOrderId(orderId);
-  }, [orderId]);
+  const isHandlingManualCloseRef = React.useRef(false);
 
   useEffect(() => {
+    if (isOpen) {
+      setActiveOrderId(orderId);
+      // Synchronize history state if modal just opened
+      if (!window.history.state?.modal) {
+        try {
+          if (orderId) {
+            window.history.pushState({ modal: 'orderDetails', orderId }, '', window.location.href);
+          } else {
+            window.history.pushState({ modal: 'orderHistory' }, '', window.location.href);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      setActiveOrderId(null);
+    }
+  }, [isOpen, orderId]);
+
+  const handleSelectOrder = (id: number) => {
+    setActiveOrderId(id);
+    try {
+      window.history.pushState({ modal: 'orderDetails', orderId: id }, '', window.location.href);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleBackToHistory = () => {
+    setActiveOrderId(null);
+    if (onClearSelectedOrder) onClearSelectedOrder();
+    if (window.history.state?.modal === 'orderDetails') {
+      isHandlingManualCloseRef.current = true;
+      try {
+        window.history.back();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const handleClose = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (activeOrderId) {
+      handleBackToHistory();
+    } else {
+      if (window.history.state?.modal === 'orderHistory') {
+        isHandlingManualCloseRef.current = true;
+        try {
+          window.history.back();
+        } catch {
+          // ignore
+        }
+      }
+      onClose();
+    }
+  };
+
+  // Keyboard navigation: Escape key closes details or history
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, activeOrderId]);
+
+  // Handle browser back button (mobile gestures & hardware back)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePopState = (e: PopStateEvent) => {
+      if (isHandlingManualCloseRef.current) {
+        isHandlingManualCloseRef.current = false;
+        return;
+      }
+
+      const state = e.state;
+      if (state?.modal === 'orderDetails') {
+        if (state.orderId) {
+          setActiveOrderId(state.orderId);
+        }
+      } else if (state?.modal === 'orderHistory') {
+        setActiveOrderId(null);
+        if (onClearSelectedOrder) onClearSelectedOrder();
+      } else {
+        // Popped past order modals to home
+        setActiveOrderId(null);
+        onClose();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isOpen, activeOrderId, onClearSelectedOrder, onClose]);
+
+  // Fetch customer orders without wiping previous list on return
+  useEffect(() => {
     if (isOpen && !activeOrderId) {
-      setFetchingOrders(true);
+      if (customerOrders.length === 0) {
+        setFetchingOrders(true);
+      }
       fetch('/api/orders', { credentials: 'include' })
         .then(res => res.ok ? res.json() : [])
         .then(data => {
@@ -86,6 +191,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
       if (!res.ok) throw new Error(data.error || 'Failed to cancel order');
       setShowCancelPrompt(false);
       fetchTracking(activeOrderId);
+      setCustomerOrders(prev => prev.map(o => o.id === activeOrderId ? { ...o, status: 'Cancelled' } : o));
     } catch (err: any) {
       alert(err.message || 'Failed to cancel order.');
     } finally {
@@ -122,17 +228,44 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleClose();
+        }
+      }}
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+    >
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden my-8 flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="p-5 sm:p-6 bg-slate-900 text-white flex justify-between items-center shrink-0">
-          <div>
-            <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Live Order Tracking</span>
-            <h2 className="text-lg sm:text-xl font-bold mt-0.5">{activeOrderId ? `Order #${activeOrderId}` : 'Track Order'}</h2>
+          <div className="flex items-center gap-3">
+            {activeOrderId && (
+              <button
+                type="button"
+                onClick={handleBackToHistory}
+                aria-label="Back to order history"
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors"
+                title="Back to Order History"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+            )}
+            <div>
+              <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                {activeOrderId ? 'Live Order Tracking' : 'Your Orders'}
+              </span>
+              <h2 className="text-lg sm:text-xl font-bold mt-0.5">
+                {activeOrderId ? `Order #${activeOrderId}` : 'Order History'}
+              </h2>
+            </div>
           </div>
           <button
-            onClick={onClose}
-            className="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full flex items-center justify-center transition-colors"
+            type="button"
+            onClick={handleClose}
+            aria-label={activeOrderId ? "Close order details and return to order history" : "Close order history"}
+            title={activeOrderId ? "Return to Order History" : "Close"}
+            className="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full flex items-center justify-center transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -157,7 +290,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
                   <button
                     onClick={() => {
                       const parsed = parseInt(inputOrderId);
-                      if (parsed) setActiveOrderId(parsed);
+                      if (parsed) handleSelectOrder(parsed);
                     }}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-colors"
                   >
@@ -179,7 +312,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
                     {customerOrders.map((ord) => (
                       <div
                         key={ord.id}
-                        onClick={() => setActiveOrderId(ord.id)}
+                        onClick={() => handleSelectOrder(ord.id)}
                         className="bg-slate-50 hover:bg-emerald-50/60 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 transition-all cursor-pointer flex justify-between items-center"
                       >
                         <div className="space-y-1">
@@ -204,7 +337,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({ isOpen, 
             <div className="py-12 text-center space-y-3">
               <p className="text-red-600 font-medium text-sm">{error}</p>
               <button
-                onClick={() => setActiveOrderId(null)}
+                onClick={handleBackToHistory}
                 className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 underline"
               >
                 Try another order ID

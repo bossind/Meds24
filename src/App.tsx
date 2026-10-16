@@ -235,11 +235,7 @@ export default function App() {
         searchInput.focus({ preventScroll: true });
       }
     } else if (tab === 'orders') {
-      if (currentUser) {
-        setIsTrackingOpen(true);
-      } else {
-        setIsAuthOpen(true);
-      }
+      setIsTrackingOpen(true);
     } else if (tab === 'profile') {
       if (currentUser) {
         setIsProfileOpen(true);
@@ -366,6 +362,10 @@ export default function App() {
         onClose={() => {
           setIsTrackingOpen(false);
           setTrackedOrderId(null);
+        }}
+        onClearSelectedOrder={() => {
+          setTrackedOrderId(null);
+          setIsTrackingOpen(true);
         }}
         orderId={trackedOrderId}
       />
