@@ -2,7 +2,8 @@ import { pool } from './db.js';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const TelegramBot = require('node-telegram-bot-api');
+const TelegramBotRaw = require('node-telegram-bot-api');
+const TelegramBot = TelegramBotRaw.default || TelegramBotRaw;
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 let bot: any = null;

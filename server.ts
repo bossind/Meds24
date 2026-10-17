@@ -11,6 +11,8 @@ import crypto from 'crypto';
 import { pool, checkDatabaseConnection } from './backend/db.js';
 import { notifyAdminsNewOrder, notifyAdminOrderEvent } from './backend/bot.js';
 import { sendCustomerNotification } from './backend/notification-service.js';
+import { calculateOrderPricing } from './backend/pricing-service.js';
+import { createPromotionsRouter } from './backend/promotions-routes.js';
 import multer from 'multer';
 
 dotenv.config();
@@ -19,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.NODE_ENV === 'production' && process.env.PORT ? process.env.PORT : 3000;
 
 app.use(cors({
   origin: true,
@@ -253,12 +255,13 @@ async function logAudit(adminId: string, adminName: string, action: string, targ
 app.post('/api/auth/signup', signupLimiter, async (req, res) => {
   try {
     const { name, phone, email, password, confirmPassword, referralCode } = req.body;
+    const finalConfirmPassword = confirmPassword || password;
 
-    if (!name || !phone || !email || !password || !confirmPassword) {
+    if (!name || !phone || !email || !password) {
       return res.status(400).json({ error: 'All required fields must be filled.' });
     }
 
-    if (password !== confirmPassword) {
+    if (password !== finalConfirmPassword) {
       return res.status(400).json({ error: 'Passwords do not match.' });
     }
 
@@ -386,6 +389,161 @@ app.post('/api/auth/logout', requireAuth, async (req: any, res: any) => {
     }
     res.clearCookie('meds24_session');
     res.json({ success: true, message: 'Logged out successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/register', signupLimiter, async (req, res) => {
+  req.url = '/api/auth/signup';
+  return (app as any)._router.handle(req, res);
+});
+
+app.patch('/api/auth/profile', requireAuth, async (req: any, res: any) => {
+  try {
+    const { name, phone } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (!phone || !phone.trim()) return res.status(400).json({ error: 'Mobile phone number is required.' });
+
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+    const existing = await pool.query('SELECT id FROM users WHERE phone = $1 AND id != $2', [cleanPhone, req.user.id]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'This phone number is already registered with another account.' });
+    }
+
+    const updateRes = await pool.query(
+      'UPDATE users SET name = $1, phone = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING id, name, email, phone, role, is_verified, referral_code',
+      [name.trim(), cleanPhone, req.user.id]
+    );
+
+    res.json({ success: true, message: 'Profile updated successfully.', user: updateRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/auth/profile', requireAuth, async (req: any, res: any) => {
+  try {
+    const { name, phone } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (!phone || !phone.trim()) return res.status(400).json({ error: 'Mobile phone number is required.' });
+
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+    const existing = await pool.query('SELECT id FROM users WHERE phone = $1 AND id != $2', [cleanPhone, req.user.id]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'This phone number is already registered with another account.' });
+    }
+
+    const updateRes = await pool.query(
+      'UPDATE users SET name = $1, phone = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING id, name, email, phone, role, is_verified, referral_code',
+      [name.trim(), cleanPhone, req.user.id]
+    );
+
+    res.json({ success: true, message: 'Profile updated successfully.', user: updateRes.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/change-password', requireAuth, async (req: any, res: any) => {
+  try {
+    const { currentPassword, newPassword, confirmNewPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required.' });
+    }
+    if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({ error: 'New passwords do not match.' });
+    }
+
+    const passError = validatePasswordStrength(newPassword);
+    if (passError) {
+      return res.status(400).json({ error: passError });
+    }
+
+    const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    const valid = await bcrypt.compare(currentPassword, userRes.rows[0].password_hash);
+    if (!valid) {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    const salt = await bcrypt.genSalt(12);
+    const newHash = await bcrypt.hash(newPassword, salt);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newHash, req.user.id]);
+
+    res.json({ success: true, message: 'Password changed successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/send-verification', requireAuth, async (req: any, res: any) => {
+  try {
+    const token = crypto.randomBytes(20).toString('hex');
+    await pool.query('UPDATE users SET verification_token = $1 WHERE id = $2', [token, req.user.id]);
+
+    sendCustomerNotification(
+      req.user.id,
+      'account',
+      'Account Verification Token',
+      `Your Meds24 verification token is: ${token}. Use this to verify your account in profile settings.`,
+      null
+    );
+
+    res.json({ success: true, message: `Verification code generated and sent to your account notifications. Token: ${token}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/verify-email', requireAuth, async (req: any, res: any) => {
+  try {
+    const { token } = req.body;
+    if (!token || !token.trim()) return res.status(400).json({ error: 'Verification token is required.' });
+
+    const userRes = await pool.query('SELECT verification_token FROM users WHERE id = $1', [req.user.id]);
+    if (userRes.rows.length === 0 || userRes.rows[0].verification_token !== token.trim()) {
+      return res.status(400).json({ error: 'Invalid verification token. Please check and try again.' });
+    }
+
+    await pool.query('UPDATE users SET is_verified = true, verification_token = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [req.user.id]);
+    res.json({ success: true, message: 'Account verified successfully!' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/forgot-password', authLimiter, async (req: any, res: any) => {
+  try {
+    const { identifier } = req.body;
+    if (!identifier || !identifier.trim()) {
+      return res.status(400).json({ error: 'Please enter your registered mobile number or email.' });
+    }
+
+    const clean = identifier.trim().toLowerCase();
+    const isPhone = /^\d+$/.test(clean);
+    const param = isPhone ? clean.replace(/\D/g, '').slice(-10) : clean;
+    const query = isPhone ? 'SELECT id, email, phone FROM users WHERE phone = $1' : 'SELECT id, email, phone FROM users WHERE email = $1';
+
+    const userRes = await pool.query(query, [param]);
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'No registered account found with these details.' });
+    }
+
+    const resetToken = crypto.randomBytes(16).toString('hex');
+    await pool.query('UPDATE users SET verification_token = $1 WHERE id = $2', [resetToken, userRes.rows[0].id]);
+
+    sendCustomerNotification(
+      userRes.rows[0].id,
+      'account',
+      'Password Reset Token',
+      `Your password reset token is: ${resetToken}. Please contact support or enter this token to reset your password.`,
+      null
+    );
+
+    res.json({
+      success: true,
+      message: `Password reset instructions sent. Verification code: ${resetToken}`
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -588,7 +746,7 @@ app.post('/api/admin/payments/:id/approve', requireAdminAuth, async (req: any, r
     const utrCheck = await client.query('SELECT id FROM payment_records WHERE utr = $1 AND status = ' + client.escapeLiteral('Approved'), [proof.utr]);
     // (or check records)
 
-    await client.query("UPDATE payment_proofs SET status = 'Approved', approved_by = $1 WHERE id = $2", [0, id]);
+    await client.query("UPDATE payment_proofs SET status = 'Approved', approved_by = (SELECT id FROM users WHERE role = 'admin' LIMIT 1) WHERE id = $1", [id]);
     await client.query("UPDATE orders SET payment_status = 'Approved', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [proof.order_id]);
 
     await client.query(
@@ -1089,7 +1247,7 @@ app.post('/api/addresses', requireAuth, async (req: any, res: any) => {
       [req.user.id, name.trim(), cleanPhone, houseNo.trim(), street.trim(), landmark ? landmark.trim() : null, city.trim(), state.trim(), pincode.trim(), addressType || 'Home', makeDefault]
     );
 
-    res.status(201).json({ success: true, address: insertRes.rows[0] });
+    res.status(201).json({ success: true, id: insertRes.rows[0].id, address: insertRes.rows[0] });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1581,7 +1739,7 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { addressId, paymentMethodCode, prescriptionUrl, items } = req.body;
+    const { addressId, paymentMethodCode, couponCode, prescriptionUrl, items } = req.body;
 
     if (!addressId || !paymentMethodCode || !items || items.length === 0) {
       return res.status(400).json({ error: 'Delivery address, payment method, and items are required.' });
@@ -1596,10 +1754,13 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
     if (paySetRes.rows.length === 0) return res.status(400).json({ error: 'Selected payment method is currently disabled or invalid.' });
     const paySetting = paySetRes.rows[0];
 
-    let mrpTotal = 0;
-    let subtotal = 0;
-    const validatedItems = [];
+    // Compute server-side trusted pricing with coupons and automatic offers
+    const pricing = await calculateOrderPricing(client as any, items, req.user.id, couponCode, paymentMethodCode);
+    if (pricing.validationErrors.length > 0 && couponCode) {
+      throw new Error(pricing.validationErrors[0]);
+    }
 
+    const validatedItems = [];
     for (const item of items) {
       const prodRes = await client.query('SELECT id, name, mrp, price, stock, is_active FROM products WHERE id = $1 FOR UPDATE', [item.productId]);
       if (prodRes.rows.length === 0 || !prodRes.rows[0].is_active) throw new Error(`Product ID ${item.productId} is not available.`);
@@ -1609,18 +1770,16 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
       const itemMrp = parseFloat(product.mrp);
       const itemPrice = parseFloat(product.price);
 
-      mrpTotal += itemMrp * item.quantity;
-      subtotal += itemPrice * item.quantity;
-
       validatedItems.push({ productId: product.id, quantity: item.quantity, unitPrice: itemPrice });
 
       await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [item.quantity, product.id]);
     }
 
-    const discountTotal = mrpTotal - subtotal;
-    const deliveryFee = subtotal > 500 ? 0 : 49;
-    let methodDiscount = (subtotal * parseFloat(paySetting.discount_percent)) / 100;
-    let finalAmount = subtotal + deliveryFee - methodDiscount + parseFloat(paySetting.fee);
+    const mrpTotal = pricing.mrpTotal;
+    const subtotal = pricing.subtotal;
+    const discountTotal = pricing.totalDiscount;
+    const deliveryFee = pricing.deliveryFee;
+    const finalAmount = pricing.finalAmount;
 
     if (finalAmount < parseFloat(paySetting.min_order_amount) || finalAmount > parseFloat(paySetting.max_order_amount)) {
       throw new Error(`Order amount ₹${finalAmount.toFixed(2)} is not eligible for ${paySetting.method_name}.`);
@@ -1641,9 +1800,20 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
     }
 
     const orderRes = await client.query(
-      `INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, shipping_address, address_snapshot, mrp_total, subtotal, discount_total, delivery_fee, total_amount, payment_method, payment_status, amount_paid, remaining_balance, status, prescription_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Awaiting Payment', $13, $14, 'Pending Confirmation', $15) RETURNING id`,
-      [req.user.id, address.name, req.user.email, address.phone, addressSnapshot, addressSnapshot, mrpTotal, subtotal, discountTotal, deliveryFee, finalAmount, paySetting.method_name, amountPaid, remainingBalance, prescriptionUrl || null]
+      `INSERT INTO orders (
+        user_id, customer_name, customer_email, customer_phone, shipping_address, address_snapshot,
+        mrp_total, subtotal, discount_total, delivery_fee, total_amount, payment_method, payment_status,
+        amount_paid, remaining_balance, status, prescription_url, coupon_code, coupon_discount, offer_discount, pricing_breakdown
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Awaiting Payment', $13, $14, 'Pending Confirmation', $15, $16, $17, $18, $19) RETURNING id`,
+      [
+        req.user.id, address.name, req.user.email, address.phone, addressSnapshot, addressSnapshot,
+        mrpTotal, subtotal, discountTotal, deliveryFee, finalAmount, paySetting.method_name,
+        amountPaid, remainingBalance, prescriptionUrl || null,
+        pricing.appliedCoupon ? pricing.appliedCoupon.code : null,
+        pricing.couponDiscount,
+        pricing.autoOfferDiscount + pricing.firstOrderDiscount,
+        JSON.stringify(pricing.pricingBreakdown)
+      ]
     );
 
     const orderId = orderRes.rows[0].id;
@@ -1652,6 +1822,34 @@ app.post('/api/orders', requireAuth, async (req: any, res: any) => {
       await client.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4)`,
         [orderId, item.productId, item.quantity, item.unitPrice]
+      );
+    }
+
+    // Record Coupon / Offer Redemptions
+    if (pricing.appliedCoupon) {
+      await client.query(
+        `INSERT INTO offer_redemptions (coupon_id, user_id, order_id, discount_amount, redemption_type, status, idempotency_key)
+         VALUES ($1, $2, $3, $4, 'coupon', 'Applied', $5) ON CONFLICT (idempotency_key) DO NOTHING`,
+        [pricing.appliedCoupon.id, req.user.id, orderId, pricing.couponDiscount, `ORDER_${orderId}_COUPON_${pricing.appliedCoupon.id}`]
+      );
+    }
+
+    if (pricing.appliedAutomaticOffers && pricing.appliedAutomaticOffers.length > 0) {
+      for (const offer of pricing.appliedAutomaticOffers) {
+        await client.query(
+          `INSERT INTO offer_redemptions (offer_id, user_id, order_id, discount_amount, redemption_type, status, idempotency_key)
+           VALUES ($1, $2, $3, $4, 'automatic_offer', 'Applied', $5) ON CONFLICT (idempotency_key) DO NOTHING`,
+          [offer.id, req.user.id, orderId, offer.discountAmount, `ORDER_${orderId}_OFFER_${offer.id}`]
+        );
+        await client.query('UPDATE automatic_offers SET current_usage_count = current_usage_count + 1 WHERE id = $1', [offer.id]);
+      }
+    }
+
+    if (pricing.firstOrderDiscount > 0) {
+      await client.query(
+        `INSERT INTO offer_redemptions (user_id, order_id, discount_amount, redemption_type, status, idempotency_key)
+         VALUES ($1, $2, $3, 'first_order_offer', 'Applied', $4) ON CONFLICT (idempotency_key) DO NOTHING`,
+        [req.user.id, orderId, pricing.firstOrderDiscount, `ORDER_${orderId}_FIRST_ORDER`]
       );
     }
 
@@ -1789,6 +1987,14 @@ const handleOrderCancel = async (req: any, res: any) => {
       }
     }
 
+    const redemptions = await client.query('SELECT offer_id FROM offer_redemptions WHERE order_id = $1 AND status = $2', [id, 'Applied']);
+    for (const red of redemptions.rows) {
+      if (red.offer_id) {
+        await client.query('UPDATE automatic_offers SET current_usage_count = GREATEST(0, current_usage_count - 1) WHERE id = $1', [red.offer_id]);
+      }
+    }
+    await client.query("UPDATE offer_redemptions SET status = 'Cancelled' WHERE order_id = $1", [id]);
+
     await client.query("UPDATE orders SET status = 'Cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [id]);
     await client.query(
       `INSERT INTO order_status_history (order_id, previous_status, new_status, changed_by, reason) VALUES ($1, $2, 'Cancelled', $3, $4)`,
@@ -1902,6 +2108,8 @@ async function requireAdminAuth(req: any, res: any, next: any) {
     return res.status(403).json({ error: 'Unauthorized: Administrator access required.' });
   }
 }
+
+app.use('/api', createPromotionsRouter(pool, requireAuth, requireAdminAuth, logAudit));
 
 app.get('/api/admin/telegram/config', requireAdminAuth, async (req: any, res: any) => {
   try {

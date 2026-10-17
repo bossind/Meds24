@@ -5,7 +5,8 @@ import { pool } from './db.js';
 dotenv.config();
 
 const require = createRequire(import.meta.url);
-const TelegramBot = require('node-telegram-bot-api');
+const TelegramBotRaw = require('node-telegram-bot-api');
+const TelegramBot = TelegramBotRaw.default || TelegramBotRaw;
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const webAppUrl = process.env.TELEGRAM_MINI_APP_URL || process.env.TELEGRAM_WEBAPP_URL || 'https://your-render-app-url.onrender.com/admin-mini-app';
