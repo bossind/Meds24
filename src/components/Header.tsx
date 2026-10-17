@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ShoppingBag, Search, User as UserIcon, ShieldCheck, FileText, Truck, Package, X } from 'lucide-react';
+import { ShoppingBag, Search, User as UserIcon, ShieldCheck, FileText, Truck, Package, X, Tag } from 'lucide-react';
 import { User, Product } from '../types';
 import { NotificationBell } from './NotificationBell';
 
@@ -11,6 +11,7 @@ interface HeaderProps {
   onOpenPrescription: () => void;
   onOpenTracking: () => void;
   onOpenHiddenSettings: () => void;
+  onOpenOffers?: () => void;
   currentUser: User | null;
   onLogout: () => void;
   searchQuery: string;
@@ -28,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenPrescription,
   onOpenTracking,
   onOpenHiddenSettings,
+  onOpenOffers,
   currentUser,
   onLogout,
   searchQuery,
@@ -232,6 +234,11 @@ export const Header: React.FC<HeaderProps> = ({
         <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-slate-600 shrink-0">
           <a href="#categories" className="hover:text-emerald-600 transition-colors whitespace-nowrap">Categories</a>
           <a href="#products" className="hover:text-emerald-600 transition-colors whitespace-nowrap">Medicines</a>
+          {onOpenOffers && (
+            <button onClick={onOpenOffers} className="hover:text-emerald-600 transition-colors whitespace-nowrap flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl">
+              <Tag className="w-4 h-4" /> Offers
+            </button>
+          )}
           <button onClick={onOpenPrescription} className="hover:text-emerald-600 transition-colors whitespace-nowrap flex items-center gap-1">
             <FileText className="w-4 h-4" /> Upload Rx
           </button>

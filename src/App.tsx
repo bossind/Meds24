@@ -13,6 +13,8 @@ import { OrderTrackingModal } from './components/OrderTrackingModal';
 import { HiddenSettingsModal } from './components/HiddenSettingsModal';
 import { Footer } from './components/Footer';
 import { BottomNavBar } from './components/BottomNavBar';
+import { OffersSection } from './components/OffersSection';
+import { OffersPage } from './components/OffersPage';
 
 export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -25,6 +27,10 @@ export default function App() {
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // Navigation & View States
+  const [viewMode, setViewMode] = useState<'home' | 'offers'>('home');
+  const [appliedCouponCode, setAppliedCouponCode] = useState<string | null>(null);
 
   // Modals & Sliders
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -52,6 +58,18 @@ export default function App() {
       .catch(() => {
         setCurrentUser(null);
       });
+  }, []);
+
+  // Handle URL hash or param changes for direct Offers page navigation
+  useEffect(() => {
+    const handleLocation = () => {
+      if (window.location.hash === '#offers' || window.location.search.includes('view=offers')) {
+        setViewMode('offers');
+      }
+    };
+    handleLocation();
+    window.addEventListener('popstate', handleLocation);
+    return () => window.removeEventListener('popstate', handleLocation);
   }, []);
 
   const fetchUserCart = async () => {
@@ -210,14 +228,20 @@ export default function App() {
     handleAddToCart(product, 1);
   };
 
+  const handleApplyCouponFromCard = (code: string) => {
+    setAppliedCouponCode(code);
+    setIsCartOpen(true);
+  };
+
   const totalCartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
-  const activeTab: 'home' | 'search' | 'orders' | 'profile' = 
+  const activeTab: 'home' | 'search' | 'offers' | 'orders' | 'profile' = 
     isProfileOpen || isAuthOpen ? 'profile' : 
     (isTrackingOpen || trackedOrderId !== null) ? 'orders' : 
+    viewMode === 'offers' ? 'offers' :
     searchQuery ? 'search' : 'home';
 
-  const handleTabSelect = (tab: 'home' | 'search' | 'orders' | 'profile') => {
+  const handleTabSelect = (tab: 'home' | 'search' | 'offers' | 'orders' | 'profile') => {
     setIsTrackingOpen(false);
     setTrackedOrderId(null);
     setIsProfileOpen(false);
@@ -226,14 +250,19 @@ export default function App() {
     setIsPrescriptionOpen(false);
 
     if (tab === 'home') {
+      setViewMode('home');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setSearchQuery('');
       setSelectedCategory('all');
     } else if (tab === 'search') {
+      setViewMode('home');
       const searchInput = (document.getElementById('mobile-search-input') || document.getElementById('header-search-input')) as HTMLInputElement | null;
       if (searchInput) {
         searchInput.focus({ preventScroll: true });
       }
+    } else if (tab === 'offers') {
+      setViewMode('offers');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (tab === 'orders') {
       setIsTrackingOpen(true);
     } else if (tab === 'profile') {
@@ -256,6 +285,7 @@ export default function App() {
         onOpenPrescription={() => setIsPrescriptionOpen(true)}
         onOpenTracking={() => setIsTrackingOpen(true)}
         onOpenHiddenSettings={() => setIsSettingsOpen(true)}
+        onOpenOffers={() => handleTabSelect('offers')}
         currentUser={currentUser}
         onLogout={handleLogout}
         searchQuery={searchQuery}
@@ -265,41 +295,58 @@ export default function App() {
         products={products}
       />
 
-      {/* Main Content */}
-      <main className="flex-1">
-        {/* Banner Carousel */}
-        <BannerCarousel
-          onActionClick={(id) => {
-            if (id === 3) setIsPrescriptionOpen(true);
-            else {
-              const el = document.getElementById('products');
-              if (el) el.scrollIntoView({ behavior: 'smooth' });
-            }
-          }}
-        />
+      {/* Main Content View Switcher */}
+      {viewMode === 'offers' ? (
+        <main className="flex-1">
+          <OffersPage
+            onBackToHome={() => handleTabSelect('home')}
+            onApplyCouponCode={handleApplyCouponFromCard}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthOpen(true)}
+          />
+        </main>
+      ) : (
+        <main className="flex-1">
+          {/* Banner Carousel */}
+          <BannerCarousel
+            onActionClick={(id) => {
+              if (id === 3) setIsPrescriptionOpen(true);
+              else {
+                const el = document.getElementById('products');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }
+            }}
+          />
 
-        {/* Category Section */}
-        <CategorySection
-          categories={categories}
-          selectedCategory={selectedCategory}
-          onSelectCategory={setSelectedCategory}
-        />
+          {/* Featured Offers & Coupons Section */}
+          <OffersSection
+            onOpenOffersPage={() => handleTabSelect('offers')}
+            onApplyCouponCode={handleApplyCouponFromCard}
+          />
 
-        {/* Product Grid with Search, Filters & Sorting */}
-        <ProductGrid
-          products={products}
-          onAddToCart={handleAddToCart}
-          onBuyNow={handleBuyNow}
-          onSelectProduct={(id) => setSelectedProductId(id)}
-          onOpenPrescription={() => setIsPrescriptionOpen(true)}
-          sortBy={sortBy}
-          onSortChange={setSortBy}
-          inStockOnly={inStockOnly}
-          onInStockToggle={setInStockOnly}
-          minDiscount={minDiscount}
-          onDiscountChange={setMinDiscount}
-        />
-      </main>
+          {/* Category Section */}
+          <CategorySection
+            categories={categories}
+            selectedCategory={selectedCategory}
+            onSelectCategory={setSelectedCategory}
+          />
+
+          {/* Product Grid with Search, Filters & Sorting */}
+          <ProductGrid
+            products={products}
+            onAddToCart={handleAddToCart}
+            onBuyNow={handleBuyNow}
+            onSelectProduct={(id) => setSelectedProductId(id)}
+            onOpenPrescription={() => setIsPrescriptionOpen(true)}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            inStockOnly={inStockOnly}
+            onInStockToggle={setInStockOnly}
+            minDiscount={minDiscount}
+            onDiscountChange={setMinDiscount}
+          />
+        </main>
+      )}
 
       {/* Footer */}
       <Footer />
@@ -327,6 +374,7 @@ export default function App() {
         }}
         currentUser={currentUser}
         onOpenAuth={() => setIsAuthOpen(true)}
+        appliedCouponCode={appliedCouponCode}
       />
 
       {/* Auth Modal */}

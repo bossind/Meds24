@@ -148,7 +148,7 @@ export async function calculateOrderPricing(
 
   const autoOffersRes = await pool.query(
     `SELECT * FROM automatic_offers 
-     WHERE is_active = true AND is_archived = false 
+     WHERE is_active = true AND COALESCE(is_archived, false) = false 
        AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
        AND (expiry_date IS NULL OR expiry_date >= CURRENT_TIMESTAMP)
      ORDER BY priority DESC, id ASC`
@@ -214,7 +214,7 @@ export async function calculateOrderPricing(
   if (couponCode && couponCode.trim()) {
     const cleanCode = couponCode.trim().toUpperCase();
     const couponRes = await pool.query(
-      `SELECT * FROM coupons WHERE UPPER(code) = $1 AND is_archived = false`,
+      `SELECT * FROM coupons WHERE UPPER(code) = $1 AND COALESCE(is_archived, false) = false`,
       [cleanCode]
     );
 

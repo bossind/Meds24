@@ -13,7 +13,7 @@ export function createPromotionsRouter(pool: Pool, requireAuth: any, requireAdmi
       const resDb = await pool.query(
         `SELECT id, code, title, description, discount_type, discount_value, max_discount_amount, min_cart_subtotal, expiry_date, customer_eligibility
          FROM coupons
-         WHERE is_active = true AND is_archived = false
+         WHERE is_active = true AND COALESCE(is_archived, false) = false
            AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
            AND (expiry_date IS NULL OR expiry_date >= CURRENT_TIMESTAMP)
          ORDER BY id DESC`
@@ -30,7 +30,7 @@ export function createPromotionsRouter(pool: Pool, requireAuth: any, requireAdmi
       const resDb = await pool.query(
         `SELECT id, name, description, discount_type, discount_value, max_discount_amount, min_cart_subtotal, expiry_date, priority
          FROM automatic_offers
-         WHERE is_active = true AND is_archived = false
+         WHERE is_active = true AND COALESCE(is_archived, false) = false
            AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
            AND (expiry_date IS NULL OR expiry_date >= CURRENT_TIMESTAMP)
          ORDER BY priority DESC, id ASC`
@@ -505,6 +505,121 @@ export function createPromotionsRouter(pool: Pool, requireAuth: any, requireAdmi
         topCoupons: topCouponsRes.rows,
         topOffers: topOffersRes.rows
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 16. Get promotions dashboard summary stats
+  router.get('/admin/promotions/dashboard-stats', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const statsRes = await pool.query(
+        `SELECT 
+            (SELECT COUNT(*) FROM coupons WHERE COALESCE(is_archived, false) = false) as total_coupons,
+            (SELECT COUNT(*) FROM coupons WHERE is_active = true AND COALESCE(is_archived, false) = false AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP) AND (expiry_date IS NULL OR expiry_date >= CURRENT_TIMESTAMP)) as active_coupons,
+            (SELECT COUNT(*) FROM coupons WHERE is_active = true AND COALESCE(is_archived, false) = false AND start_date > CURRENT_TIMESTAMP) as scheduled_coupons,
+            (SELECT COUNT(*) FROM coupons WHERE COALESCE(is_archived, false) = false AND expiry_date < CURRENT_TIMESTAMP) as expired_coupons,
+            (SELECT COUNT(*) FROM offer_redemptions WHERE status = 'Applied') as total_redemptions,
+            (SELECT COALESCE(SUM(discount_amount), 0) FROM offer_redemptions WHERE status = 'Applied') as total_discount_granted,
+            (SELECT COUNT(*) FROM automatic_offers WHERE is_active = true AND COALESCE(is_archived, false) = false AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP) AND (expiry_date IS NULL OR expiry_date >= CURRENT_TIMESTAMP)) as active_automatic_offers`
+      );
+
+      const sysConfigs = await getGlobalSystemConfigs(pool);
+      const firstOrderStatus = sysConfigs.first_order_offer_enabled === 'true' ? 'Active' : 'Disabled';
+
+      res.json({
+        ...statsRes.rows[0],
+        first_order_offer_status: firstOrderStatus,
+        sysConfigs
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 17. Get detailed redemption history table
+  router.get('/admin/promotions/redemptions', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const { search, couponCode, status, limit = 50, offset = 0 } = req.query;
+
+      let whereClause = 'WHERE 1=1';
+      const queryParams: any[] = [];
+
+      if (search && String(search).trim()) {
+        queryParams.push(`%${String(search).trim()}%`);
+        whereClause += ` AND (c.code ILIKE $${queryParams.length} OR CAST(r.order_id AS TEXT) ILIKE $${queryParams.length} OR u.name ILIKE $${queryParams.length} OR u.phone ILIKE $${queryParams.length})`;
+      }
+
+      if (couponCode && String(couponCode).trim()) {
+        queryParams.push(String(couponCode).trim().toUpperCase());
+        whereClause += ` AND UPPER(c.code) = $${queryParams.length}`;
+      }
+
+      if (status && String(status).trim()) {
+        queryParams.push(String(status).trim());
+        whereClause += ` AND r.status = $${queryParams.length}`;
+      }
+
+      queryParams.push(parseInt(String(limit), 10));
+      const limitIdx = queryParams.length;
+      queryParams.push(parseInt(String(offset), 10));
+      const offsetIdx = queryParams.length;
+
+      const resDb = await pool.query(
+        `SELECT r.id, r.redemption_type, r.discount_amount, r.status, r.created_at,
+                r.order_id, r.user_id,
+                c.code as coupon_code, c.title as coupon_title,
+                o_offer.name as offer_name,
+                u.name as customer_name, u.phone as customer_phone
+         FROM offer_redemptions r
+         LEFT JOIN coupons c ON r.coupon_id = c.id
+         LEFT JOIN automatic_offers o_offer ON r.offer_id = o_offer.id
+         LEFT JOIN users u ON r.user_id = u.id
+         ${whereClause}
+         ORDER BY r.id DESC
+         LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        queryParams
+      );
+
+      res.json(resDb.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 18. Duplicate coupon configuration
+  router.post('/admin/coupons/:id/duplicate', requireAdminAuth, async (req: any, res: Response) => {
+    try {
+      const { id } = req.params;
+      const sourceRes = await pool.query('SELECT * FROM coupons WHERE id = $1', [id]);
+      if (sourceRes.rows.length === 0) return res.status(404).json({ error: 'Source coupon not found.' });
+
+      const src = sourceRes.rows[0];
+      const newCode = `${src.code}_COPY_${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const adminId = req.admin?.dbUserId || null;
+
+      const dupRes = await pool.query(
+        `INSERT INTO coupons (
+          code, title, description, discount_type, discount_value,
+          max_discount_amount, min_cart_subtotal, start_date, expiry_date,
+          total_redemption_limit, per_customer_limit, eligible_product_ids,
+          eligible_category_ids, customer_eligibility, can_combine_with_offers,
+          can_combine_with_coupons, is_active, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true, $17)
+        RETURNING *`,
+        [
+          newCode, `${src.title} (Copy)`, src.description, src.discount_type, src.discount_value,
+          src.max_discount_amount, src.min_cart_subtotal, src.start_date, src.expiry_date,
+          src.total_redemption_limit, src.per_customer_limit, src.eligible_product_ids,
+          src.eligible_category_ids, src.customer_eligibility, src.can_combine_with_offers,
+          src.can_combine_with_coupons, adminId
+        ]
+      );
+
+      await logAudit(req.admin.id, req.admin.name, 'DUPLICATE_COUPON', 'coupon', dupRes.rows[0].id, `Duplicated coupon #${id} into "${newCode}"`);
+
+      res.status(201).json({ success: true, coupon: dupRes.rows[0] });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

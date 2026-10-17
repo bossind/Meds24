@@ -151,6 +151,7 @@ test('9. Product or Category restriction is enforced', async () => {
 });
 
 test('10. Automatic offer application applies automatically', async () => {
+  await pool.query("DELETE FROM automatic_offers WHERE name LIKE 'Auto Offer Test%'");
   const offerName = 'Auto Offer Test ' + Date.now();
   await pool.query(
     `INSERT INTO automatic_offers (name, discount_type, discount_value, min_cart_subtotal, priority, is_active)

@@ -1,6 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { CartItem, Product, User, Address, PaymentSetting } from '../types';
-import { X, Trash2, Plus, Minus, ArrowRight, CheckCircle2, AlertTriangle, FileText, QrCode, MapPin, ShieldCheck, Upload } from 'lucide-react';
+import {
+  X,
+  Trash2,
+  Plus,
+  Minus,
+  ArrowRight,
+  CheckCircle2,
+  AlertTriangle,
+  FileText,
+  QrCode,
+  MapPin,
+  ShieldCheck,
+  Upload,
+  Tag,
+  Zap,
+  Sparkles,
+  Percent,
+  Check,
+  Loader2,
+} from 'lucide-react';
 import { AddressManagerModal } from './AddressManagerModal';
 
 interface CartDrawerProps {
@@ -13,6 +32,7 @@ interface CartDrawerProps {
   onCheckoutSuccess: (orderId: number) => void;
   currentUser: User | null;
   onOpenAuth: () => void;
+  appliedCouponCode?: string | null;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -25,9 +45,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onCheckoutSuccess,
   currentUser,
   onOpenAuth,
+  appliedCouponCode,
 }) => {
   const [step, setStep] = useState<'cart' | 'checkout' | 'upi_payment' | 'success'>('cart');
-  
+
   // Addresses & Payment settings
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
@@ -36,38 +57,26 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [paymentSettings, setPaymentSettings] = useState<PaymentSetting[]>([]);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('cod');
 
+  // Coupons & Offers State
+  const [couponCodeInput, setCouponCodeInput] = useState<string>('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    title: string;
+    discountAmount: number;
+  } | null>(null);
+  const [couponValidationMsg, setCouponValidationMsg] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState<boolean>(false);
+  const [serverPricing, setServerPricing] = useState<any | null>(null);
+
   // Prescription & Proof
   const [prescriptionUrl, setPrescriptionUrl] = useState('');
   const [utr, setUtr] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setError('');
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      setError('Please select a valid JPEG, PNG, or WebP image.');
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Image file size must be less than 5 MB.');
-      return;
-    }
-
-    setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
-  };
-
-  const handleRemoveFile = () => {
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -83,11 +92,27 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   }, [items]);
 
   useEffect(() => {
+    if (appliedCouponCode) {
+      setCouponCodeInput(appliedCouponCode);
+      if (items.length > 0) {
+        setStep('checkout');
+        fetchServerPricing(appliedCouponCode);
+      }
+    }
+  }, [appliedCouponCode]);
+
+  useEffect(() => {
     if (isOpen && currentUser) {
       fetchAddresses();
       fetchPaymentSettings();
     }
   }, [isOpen, currentUser]);
+
+  useEffect(() => {
+    if (isOpen && items.length > 0 && step === 'checkout') {
+      fetchServerPricing();
+    }
+  }, [isOpen, step, items, selectedPaymentMethod]);
 
   const fetchAddresses = async () => {
     try {
@@ -116,20 +141,135 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   };
 
+  const fetchServerPricing = async (codeToUse?: string | null) => {
+    if (items.length === 0) return;
+    try {
+      const targetCode = codeToUse !== undefined ? codeToUse : appliedCoupon ? appliedCoupon.code : null;
+      const res = await fetch('/api/cart/pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+          couponCode: targetCode,
+          paymentMethodCode: selectedPaymentMethod,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setServerPricing(data);
+        if (data.appliedCoupon) {
+          setAppliedCoupon({
+            code: data.appliedCoupon.code,
+            title: data.appliedCoupon.title,
+            discountAmount: data.appliedCoupon.discountAmount,
+          });
+        } else if (codeToUse === null) {
+          setAppliedCoupon(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch server pricing:', err);
+    }
+  };
+
+  const handleApplyCoupon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!couponCodeInput.trim()) {
+      setCouponValidationMsg({ type: 'error', text: 'Enter coupon code' });
+      return;
+    }
+
+    setIsValidatingCoupon(true);
+    setCouponValidationMsg(null);
+
+    try {
+      const res = await fetch('/api/coupons/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          couponCode: couponCodeInput.trim().toUpperCase(),
+          items: items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+          paymentMethodCode: selectedPaymentMethod,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.valid) {
+        setCouponValidationMsg({
+          type: 'error',
+          text: data.error || 'Invalid or ineligible coupon code.',
+        });
+        setAppliedCoupon(null);
+        fetchServerPricing(null);
+      } else {
+        const codeApplied = data.couponCode || couponCodeInput.trim().toUpperCase();
+        setAppliedCoupon({
+          code: codeApplied,
+          title: data.appliedCoupon?.title || 'Coupon Code',
+          discountAmount: data.discountAmount || data.pricing?.couponDiscount || 0,
+        });
+        setServerPricing(data.pricing);
+        setCouponValidationMsg({
+          type: 'success',
+          text: `Coupon "${codeApplied}" applied successfully!`,
+        });
+      }
+    } catch (err: any) {
+      setCouponValidationMsg({
+        type: 'error',
+        text: err.message || 'Network failure while validating coupon.',
+      });
+    } finally {
+      setIsValidatingCoupon(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCodeInput('');
+    setCouponValidationMsg(null);
+    fetchServerPricing(null);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setError('');
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setError('Please select a valid JPEG, PNG, or WebP image.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image file size must be less than 5 MB.');
+      return;
+    }
+
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   if (!isOpen) return null;
 
-  const mrpTotal = items.reduce((sum, item) => sum + item.product.mrp * item.quantity, 0);
-  const subtotal = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
-  const productDiscount = mrpTotal - subtotal;
-  const deliveryFee = subtotal > 500 ? 0 : 49;
-
-  // Selected payment method config
-  const activePayConfig = paymentSettings.find((p) => p.method_code === selectedPaymentMethod);
-  const methodDiscountPct = activePayConfig ? parseFloat(String(activePayConfig.discount_percent || 0)) : 0;
-  const methodDiscountAmount = (subtotal * methodDiscountPct) / 100;
-  const methodFee = activePayConfig ? parseFloat(String(activePayConfig.fee || 0)) : 0;
-
-  const finalAmount = Math.max(0, subtotal + deliveryFee - methodDiscountAmount + methodFee);
+  // Fallback client calculations if server pricing isn't fetched yet
+  const mrpTotal = serverPricing ? serverPricing.mrpTotal : items.reduce((sum, item) => sum + item.product.mrp * item.quantity, 0);
+  const subtotal = serverPricing ? serverPricing.subtotal : items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const autoOfferDiscount = serverPricing ? serverPricing.autoOfferDiscount : 0;
+  const couponDiscount = serverPricing ? serverPricing.couponDiscount : appliedCoupon ? appliedCoupon.discountAmount : 0;
+  const firstOrderDiscount = serverPricing ? serverPricing.firstOrderDiscount : 0;
+  const paymentMethodDiscount = serverPricing ? serverPricing.paymentMethodDiscount : 0;
+  const deliveryFee = serverPricing ? serverPricing.deliveryFee : subtotal > 500 ? 0 : 49;
+  const finalPayable = serverPricing ? serverPricing.finalAmount : Math.max(0, subtotal - autoOfferDiscount - couponDiscount - firstOrderDiscount - paymentMethodDiscount + deliveryFee);
 
   const requiresPrescription = items.some((item) => item.product.requires_prescription);
 
@@ -158,6 +298,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         body: JSON.stringify({
           addressId: selectedAddress.id,
           paymentMethodCode: selectedPaymentMethod,
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
           prescriptionUrl: prescriptionUrl || null,
           items: items.map((item) => ({
             productId: item.product.id,
@@ -228,11 +369,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs animate-fadeIn">
       <div className="bg-white w-full max-w-md h-full flex flex-col shadow-2xl animate-slideLeft">
         {/* Header */}
-        <div className="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-          <h2 className="font-bold text-lg text-slate-900">
+        <div className="p-4 sm:p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+          <h2 className="font-bold text-base sm:text-lg text-slate-900">
             {step === 'cart' && `Your Shopping Cart (${items.length})`}
             {step === 'checkout' && (createdOrderData ? 'Order Summary' : 'Secure Checkout')}
             {step === 'upi_payment' && 'Complete UPI Payment'}
@@ -246,8 +387,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 onClose();
               }
             }}
-            aria-label="Close payment page"
-            title={step === 'upi_payment' ? 'Return to Order Summary' : 'Close'}
+            aria-label="Close"
             className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -255,7 +395,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           {step === 'cart' && (
             <>
               {items.length === 0 ? (
@@ -352,7 +492,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
             ) : (
-              <form onSubmit={handlePlaceOrder} className="space-y-4">
+              <form onSubmit={handlePlaceOrder} className="space-y-5">
                 {error && <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl font-medium">{error}</div>}
 
                 {/* Delivery Address Section */}
@@ -378,6 +518,94 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </div>
                   ) : (
                     <p className="text-xs text-red-600 font-medium">No delivery address selected.</p>
+                  )}
+                </div>
+
+                {/* OFFERS & COUPONS SECTION */}
+                <div className="bg-gradient-to-br from-emerald-50/60 to-white p-4 rounded-2xl border border-emerald-200/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Tag className="w-4 h-4 text-emerald-600" /> Offers & Coupons
+                    </span>
+                  </div>
+
+                  {/* Applied Coupon Pill */}
+                  {appliedCoupon ? (
+                    <div className="flex items-center justify-between p-3 bg-emerald-100/90 border border-emerald-300 rounded-xl text-xs">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <div>
+                          <p className="font-extrabold text-emerald-900">{appliedCoupon.code}</p>
+                          <p className="text-[11px] text-emerald-800">
+                            Savings: -₹{appliedCoupon.discountAmount}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRemoveCoupon}
+                        className="text-xs font-bold text-red-600 hover:text-red-800 bg-white/80 hover:bg-white px-2.5 py-1 rounded-lg transition-colors border border-red-200"
+                      >
+                        Remove Coupon
+                      </button>
+                    </div>
+                  ) : (
+                    /* Coupon Input & Apply Button */
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={couponCodeInput}
+                          onChange={(e) => setCouponCodeInput(e.target.value.toUpperCase())}
+                          placeholder="Enter coupon code"
+                          className="flex-1 bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleApplyCoupon}
+                          disabled={isValidatingCoupon || !couponCodeInput.trim()}
+                          className="bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors shrink-0 flex items-center gap-1"
+                        >
+                          {isValidatingCoupon ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Validating
+                            </>
+                          ) : (
+                            'Apply Coupon'
+                          )}
+                        </button>
+                      </div>
+
+                      {couponValidationMsg && (
+                        <p
+                          className={`text-xs font-medium px-1 ${
+                            couponValidationMsg.type === 'success' ? 'text-emerald-700' : 'text-red-600'
+                          }`}
+                        >
+                          {couponValidationMsg.text}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Active Automatic Offers & First Order Offers Feedback */}
+                  {serverPricing && (
+                    <div className="space-y-1.5 pt-1">
+                      {serverPricing.appliedAutomaticOffers?.map((off: any) => (
+                        <div key={off.id} className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>Eligible automatic offer applied: <strong>{off.name}</strong> (-₹{off.discountAmount})</span>
+                        </div>
+                      ))}
+
+                      {serverPricing.firstOrderDiscount > 0 && (
+                        <div className="text-[11px] font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200/80 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span>First order welcome discount applied (-₹{serverPricing.firstOrderDiscount})</span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -438,7 +666,57 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                 )}
 
-                <div className="pt-4 flex gap-3">
+                {/* SERVER-AUTHORITATIVE CHECKOUT BILL BREAKDOWN */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2 text-xs">
+                  <span className="font-bold text-slate-800 uppercase tracking-wider block mb-1">Bill Breakdown</span>
+                  
+                  <div className="flex justify-between text-slate-600">
+                    <span>Product Subtotal</span>
+                    <span className="font-semibold text-slate-900">₹{subtotal}</span>
+                  </div>
+
+                  {autoOfferDiscount > 0 && (
+                    <div className="flex justify-between text-amber-700 font-medium">
+                      <span>Automatic Offer Discount</span>
+                      <span>-₹{autoOfferDiscount}</span>
+                    </div>
+                  )}
+
+                  {couponDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-700 font-medium">
+                      <span>Coupon Discount ({appliedCoupon?.code})</span>
+                      <span>-₹{couponDiscount}</span>
+                    </div>
+                  )}
+
+                  {firstOrderDiscount > 0 && (
+                    <div className="flex justify-between text-indigo-700 font-medium">
+                      <span>First-Order Discount</span>
+                      <span>-₹{firstOrderDiscount}</span>
+                    </div>
+                  )}
+
+                  {paymentMethodDiscount > 0 && (
+                    <div className="flex justify-between text-teal-700 font-medium">
+                      <span>Payment Method Discount</span>
+                      <span>-₹{paymentMethodDiscount}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between text-slate-600">
+                    <span>Delivery Charge</span>
+                    <span className="font-semibold text-slate-900">
+                      {deliveryFee === 0 ? <strong className="text-emerald-700">FREE</strong> : `₹${deliveryFee}`}
+                    </span>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200 flex justify-between items-center font-black text-sm text-slate-900">
+                    <span>Final Payable Total</span>
+                    <span className="text-emerald-800 text-base">₹{finalPayable}</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex gap-3">
                   <button
                     type="button"
                     onClick={() => setStep('cart')}
@@ -451,7 +729,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     disabled={loading || !selectedAddress}
                     className="w-2/3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md flex items-center justify-center gap-2"
                   >
-                    {loading ? 'Processing...' : 'Place Order'}
+                    {loading ? 'Processing...' : `Place Order (₹${finalPayable})`}
                   </button>
                 </div>
               </form>
@@ -460,7 +738,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
           {step === 'upi_payment' && createdOrderData && (
             <div className="space-y-6 text-center">
-              <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-200 space-y-3">
+              <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-200 space-y-3 text-left">
                 <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block">Order #{createdOrderData.orderId} Created</span>
                 <p className="text-2xl font-extrabold text-slate-900">
                   ₹{createdOrderData.amountPaid !== undefined ? createdOrderData.amountPaid : createdOrderData.finalAmount}
@@ -499,82 +777,69 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <p className="text-[11px] text-slate-500 mb-2">Select a screenshot of your successful UPI transaction from your gallery.</p>
                   
                   <input
-                    type="file"
                     ref={fileInputRef}
+                    type="file"
                     accept="image/jpeg,image/png,image/webp"
                     onChange={handleFileSelect}
                     className="hidden"
                   />
 
-                  {previewUrl && selectedFile ? (
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 space-y-3">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={previewUrl}
-                          alt="Payment Proof Preview"
-                          className="w-16 h-16 object-cover rounded-xl border border-slate-200 bg-white"
-                        />
-                        <div className="flex-1 min-w-0 text-xs">
-                          <p className="font-bold text-slate-900 truncate">{selectedFile.name}</p>
-                          <p className="text-slate-500">{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold py-2 rounded-xl text-xs transition-colors"
-                        >
-                          Change Screenshot
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleRemoveFile}
-                          className="bg-red-50 hover:bg-red-100 text-red-600 font-semibold px-3 py-2 rounded-xl text-xs transition-colors"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                  {previewUrl ? (
+                    <div className="relative rounded-2xl border border-emerald-300 overflow-hidden bg-emerald-50/50 p-2 text-center">
+                      <img
+                        src={previewUrl}
+                        alt="Payment Proof Preview"
+                        className="max-h-48 rounded-xl mx-auto object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleRemoveFile}
+                        className="mt-2 text-xs text-red-600 font-bold hover:underline inline-flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Remove Screenshot
+                      </button>
                     </div>
                   ) : (
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="w-full border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-700 font-bold py-4 px-4 rounded-2xl text-xs transition-all flex flex-col items-center justify-center gap-1.5"
+                      className="w-full border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-2xl p-4 text-center cursor-pointer transition-colors bg-slate-50 hover:bg-emerald-50/50"
                     >
-                      <Upload className="w-5 h-5 text-emerald-600" />
-                      <span>Choose Screenshot</span>
-                      <span className="text-[10px] font-normal text-slate-500">Supports JPEG, PNG, WebP (Max 5MB)</span>
+                      <Upload className="w-6 h-6 text-slate-400 mx-auto mb-1" />
+                      <span className="text-xs font-bold text-slate-700 block">Tap to upload screenshot</span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">Supports JPG, PNG, WebP (Max 5MB)</span>
                     </button>
                   )}
                 </div>
 
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                  disabled={loading || !selectedFile}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-3.5 rounded-xl text-xs transition-colors shadow-md flex items-center justify-center gap-2"
                 >
-                  <Upload className="w-4 h-4" /> {loading ? 'Submitting...' : 'Submit Payment Proof'}
+                  {loading ? 'Submitting...' : 'Submit Payment Proof'}
                 </button>
               </form>
             </div>
           )}
 
           {step === 'success' && (
-            <div className="text-center py-12 space-y-4">
+            <div className="text-center py-12 space-y-5">
               <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-8 h-8" />
+                <CheckCircle2 className="w-10 h-10" />
               </div>
-              <h3 className="font-extrabold text-slate-900 text-xl">Order Successfully Confirmed!</h3>
-              <p className="text-slate-600 text-sm">
-                Your order has been recorded and submitted for dispatch and admin verification.
+              <h3 className="font-extrabold text-slate-900 text-xl">Order Placed Successfully!</h3>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                Thank you for ordering with Meds24. Your order is now being processed.
               </p>
+
               <button
+                type="button"
                 onClick={() => {
-                  setStep('cart');
                   onClose();
+                  setStep('cart');
                 }}
-                className="mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-3 rounded-xl text-xs shadow-md transition-all"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-xs shadow-md transition-colors"
               >
                 Continue Shopping
               </button>
@@ -582,54 +847,42 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           )}
         </div>
 
-        {/* Footer Summary */}
+        {/* Footer actions for step === 'cart' */}
         {step === 'cart' && items.length > 0 && (
-          <div className="p-6 border-t border-slate-200 bg-slate-50 space-y-4">
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between text-slate-600">
-                <span>Bag MRP Total</span>
-                <span>₹{mrpTotal}</span>
+          <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 space-y-3">
+            <div className="space-y-1 text-xs text-slate-600">
+              <div className="flex justify-between">
+                <span>Subtotal ({items.length} items)</span>
+                <span className="font-semibold text-slate-900">₹{subtotal}</span>
               </div>
-              {productDiscount > 0 && (
-                <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>Product Discount</span>
-                  <span>-₹{productDiscount.toFixed(2)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-slate-600">
-                <span>Delivery Fee {subtotal > 500 && '(Free > ₹500)'}</span>
-                <span>{deliveryFee === 0 ? 'FREE' : `₹${deliveryFee}`}</span>
+              <div className="flex justify-between">
+                <span>Estimated Delivery</span>
+                <span className="font-semibold text-slate-900">
+                  {deliveryFee === 0 ? <strong className="text-emerald-700">FREE</strong> : `₹${deliveryFee}`}
+                </span>
               </div>
-              <div className="flex justify-between text-slate-900 font-extrabold text-base pt-2 border-t border-slate-200">
-                <span>Subtotal</span>
-                <span>₹{subtotal + deliveryFee}</span>
+              <div className="flex justify-between pt-1 font-extrabold text-slate-900 text-sm">
+                <span>Total Amount</span>
+                <span className="text-emerald-700">₹{subtotal + deliveryFee}</span>
               </div>
             </div>
 
             <button
               onClick={() => {
-                if (!currentUser) {
-                  onOpenAuth();
-                } else {
+                if (currentUser) {
                   setStep('checkout');
+                } else {
+                  onOpenAuth();
                 }
               }}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-sm transition-all shadow-md flex items-center justify-center gap-2"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-2"
             >
-              {currentUser ? 'Proceed to Checkout' : 'Login to Checkout'} <ArrowRight className="w-4 h-4" />
+              <span>Proceed to Checkout</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         )}
       </div>
-
-      {/* Address Manager Modal */}
-      <AddressManagerModal
-        isOpen={isAddressModalOpen}
-        onClose={() => setIsAddressModalOpen(false)}
-        currentUser={currentUser}
-        selectable={true}
-        onSelectAddress={(addr) => setSelectedAddress(addr)}
-      />
     </div>
   );
 };
